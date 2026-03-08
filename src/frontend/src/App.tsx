@@ -1,8 +1,10 @@
 import { Toaster } from "@/components/ui/sonner";
+import { useQueryClient } from "@tanstack/react-query";
 import { Loader2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import LoginPage from "./components/LoginPage";
 import Sidebar from "./components/Sidebar";
+import { useActor } from "./hooks/useActor";
 import { useInternetIdentity } from "./hooks/useInternetIdentity";
 import { useSeedData } from "./hooks/useSeedData";
 import CodeEditorPage from "./pages/CodeEditorPage";
@@ -33,9 +35,21 @@ export default function App() {
 
   const [nav, setNav] = useState<NavState>({ page: "dashboard" });
   const [publicSlug] = useState<string | null>(() => getPublicSlug());
+  const queryClient = useQueryClient();
+  const { actor, isFetching: actorLoading } = useActor();
 
   // Seed sample data on first login
   useSeedData(isAuthenticated);
+
+  // Safety net: if actor is authenticated but query settled with no actor,
+  // invalidate the actor query to force a retry (handles transient init failures)
+  useEffect(() => {
+    if (!isAuthenticated || actorLoading) return;
+    if (!actor) {
+      // Actor query settled but returned nothing — invalidate to force a retry
+      queryClient.invalidateQueries({ queryKey: ["actor"] });
+    }
+  }, [isAuthenticated, actor, actorLoading, queryClient]);
 
   const navigate = (page: Page, id?: bigint, artifactId?: bigint) => {
     setNav({ page, projectId: id, artifactId });

@@ -63,8 +63,9 @@ export function useCreateProject() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: projectKeys.all });
     },
-    onError: () => {
-      toast.error("Failed to create project");
+    onError: (err) => {
+      const message = err instanceof Error ? err.message : String(err);
+      toast.error(`Failed to create project: ${message}`);
     },
   });
 }

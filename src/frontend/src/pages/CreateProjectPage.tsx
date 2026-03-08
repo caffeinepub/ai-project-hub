@@ -3,10 +3,11 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
-import { ArrowLeft, Loader2, Sparkles } from "lucide-react";
+import { ArrowLeft, Loader2, Sparkles, WifiOff } from "lucide-react";
 import { motion } from "motion/react";
 import { useState } from "react";
 import { toast } from "sonner";
+import { useActor } from "../hooks/useActor";
 import { useCreateProject } from "../hooks/useQueries";
 import { CATEGORY_OPTIONS, makeCategoryFromKind } from "../lib/projectUtils";
 import type { CategoryKind } from "../lib/projectUtils";
@@ -25,11 +26,19 @@ export default function CreateProjectPage({
   const [otherLabel, setOtherLabel] = useState("");
   const [description, setDescription] = useState("");
   const createProject = useCreateProject();
+  const { actor, isFetching: actorLoading } = useActor();
+  const isReady = !!actor && !actorLoading;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim() || !categoryKind) {
       toast.error("Please fill in all required fields");
+      return;
+    }
+    if (!isReady) {
+      toast.error(
+        "Still connecting to the backend — please wait a moment and try again.",
+      );
       return;
     }
     try {
@@ -51,7 +60,12 @@ export default function CreateProjectPage({
     } catch (err) {
       // onError in the mutation already shows a toast, but we catch here to
       // prevent an unhandled rejection from breaking the form state
+      const message = err instanceof Error ? err.message : String(err);
       console.error("Create project error:", err);
+      // Show the actual error so the user knows what went wrong
+      if (message && !message.includes("Not authenticated")) {
+        toast.error(`Could not create project: ${message}`);
+      }
     }
   };
 
@@ -189,12 +203,36 @@ export default function CreateProjectPage({
             />
           </div>
 
+          {/* Actor not ready banner */}
+          {!isReady && (
+            <motion.div
+              initial={{ opacity: 0, y: 4 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="flex items-center gap-2.5 px-4 py-3 rounded-xl bg-yellow-500/10 border border-yellow-500/30 text-yellow-600 dark:text-yellow-400 text-sm"
+              data-ocid="new_project.loading_state"
+            >
+              {actorLoading ? (
+                <Loader2 className="w-4 h-4 animate-spin shrink-0" />
+              ) : (
+                <WifiOff className="w-4 h-4 shrink-0" />
+              )}
+              <span>
+                {actorLoading
+                  ? "Connecting to backend… you can fill the form while this loads."
+                  : "Backend connection unavailable. Please refresh the page and try again."}
+              </span>
+            </motion.div>
+          )}
+
           {/* Submit */}
           <div className="flex items-center gap-3 pt-2">
             <Button
               type="submit"
               disabled={
-                createProject.isPending || !name.trim() || !categoryKind
+                createProject.isPending ||
+                !name.trim() ||
+                !categoryKind ||
+                !isReady
               }
               className="flex-1 h-11 bg-primary text-primary-foreground hover:bg-primary/90 shadow-lg shadow-primary/20 font-semibold"
               data-ocid="new_project.submit.button"
@@ -203,6 +241,11 @@ export default function CreateProjectPage({
                 <>
                   <Loader2 className="mr-2 w-4 h-4 animate-spin" />
                   Creating…
+                </>
+              ) : actorLoading ? (
+                <>
+                  <Loader2 className="mr-2 w-4 h-4 animate-spin" />
+                  Connecting…
                 </>
               ) : (
                 <>
@@ -216,6 +259,7 @@ export default function CreateProjectPage({
               variant="outline"
               onClick={() => onNavigate("projects")}
               className="h-11 border-border text-muted-foreground hover:text-foreground"
+              data-ocid="new_project.cancel.button"
             >
               Cancel
             </Button>

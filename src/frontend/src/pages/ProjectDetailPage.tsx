@@ -737,19 +737,6 @@ More content here.`;
                 Project
               </TabsTrigger>
               <TabsTrigger
-                value="files"
-                className="text-xs data-[state=active]:bg-primary/20 data-[state=active]:text-primary gap-1.5"
-                data-ocid="project_detail.files.tab"
-              >
-                <Code2 className="w-3.5 h-3.5" />
-                Code Files
-                {artifacts.length > 0 && (
-                  <span className="ml-1 text-xs bg-primary/20 text-primary rounded-full px-1.5 py-0">
-                    {artifacts.length}
-                  </span>
-                )}
-              </TabsTrigger>
-              <TabsTrigger
                 value="images"
                 className="text-xs data-[state=active]:bg-primary/20 data-[state=active]:text-primary gap-1.5"
                 data-ocid="project_detail.images.tab"
@@ -759,6 +746,19 @@ More content here.`;
                 {projectImages.length > 0 && (
                   <span className="ml-1 text-xs bg-primary/20 text-primary rounded-full px-1.5 py-0">
                     {projectImages.length}
+                  </span>
+                )}
+              </TabsTrigger>
+              <TabsTrigger
+                value="files"
+                className="text-xs data-[state=active]:bg-primary/20 data-[state=active]:text-primary gap-1.5"
+                data-ocid="project_detail.files.tab"
+              >
+                <Code2 className="w-3.5 h-3.5" />
+                Code Files
+                {artifacts.length > 0 && (
+                  <span className="ml-1 text-xs bg-primary/20 text-primary rounded-full px-1.5 py-0">
+                    {artifacts.length}
                   </span>
                 )}
               </TabsTrigger>

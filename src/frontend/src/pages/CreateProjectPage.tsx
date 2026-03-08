@@ -32,14 +32,27 @@ export default function CreateProjectPage({
       toast.error("Please fill in all required fields");
       return;
     }
-    const category = makeCategoryFromKind(categoryKind, otherLabel || "Other");
-    const project = await createProject.mutateAsync({
-      name: name.trim(),
-      category,
-      description: description.trim(),
-    });
-    toast.success("Project created!");
-    onNavigate("detail", project.id);
+    try {
+      const category = makeCategoryFromKind(
+        categoryKind,
+        otherLabel || "Other",
+      );
+      const project = await createProject.mutateAsync({
+        name: name.trim(),
+        category,
+        description: description.trim(),
+      });
+      if (!project || project.id === undefined) {
+        toast.error("Project creation failed. Please try again.");
+        return;
+      }
+      toast.success("Project created!");
+      onNavigate("detail", project.id);
+    } catch (err) {
+      // onError in the mutation already shows a toast, but we catch here to
+      // prevent an unhandled rejection from breaking the form state
+      console.error("Create project error:", err);
+    }
   };
 
   return (

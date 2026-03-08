@@ -53,25 +53,16 @@ export default function ProjectsPage({ onNavigate }: ProjectsPageProps) {
       <div className="max-w-6xl mx-auto px-6 py-8">
         {/* Header */}
         <motion.div
-          className="flex items-center justify-between mb-6"
+          className="mb-6"
           initial={{ opacity: 0, y: -10 }}
           animate={{ opacity: 1, y: 0 }}
         >
-          <div>
-            <h1 className="font-display text-3xl font-bold text-foreground">
-              My Projects
-            </h1>
-            <p className="text-muted-foreground text-sm mt-0.5">
-              {projects.length} project{projects.length !== 1 ? "s" : ""}
-            </p>
-          </div>
-          <Button
-            onClick={() => onNavigate("new")}
-            className="bg-primary text-primary-foreground hover:bg-primary/90 shadow-lg shadow-primary/20"
-          >
-            <PlusCircle className="w-4 h-4 mr-2" />
-            New Project
-          </Button>
+          <h1 className="font-display text-3xl font-bold text-foreground">
+            My Projects
+          </h1>
+          <p className="text-muted-foreground text-sm mt-0.5">
+            {projects.length} project{projects.length !== 1 ? "s" : ""}
+          </p>
         </motion.div>
 
         {/* Filter bar */}

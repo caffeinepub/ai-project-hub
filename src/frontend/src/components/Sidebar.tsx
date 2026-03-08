@@ -33,12 +33,6 @@ const NAV_ITEMS = [
     icon: FolderOpen,
     ocid: "sidebar.projects.link",
   },
-  {
-    id: "new" as Page,
-    label: "Create New AI",
-    icon: PlusCircle,
-    ocid: "sidebar.new_project.link",
-  },
 ];
 
 export default function Sidebar({ currentPage, onNavigate }: SidebarProps) {
@@ -95,6 +89,27 @@ export default function Sidebar({ currentPage, onNavigate }: SidebarProps) {
             </button>
           );
         })}
+
+        {/* New Project action button */}
+        <div className="pt-3">
+          <button
+            type="button"
+            data-ocid="sidebar.new_project.button"
+            onClick={() => {
+              onNavigate("new");
+              setMobileOpen(false);
+            }}
+            className={cn(
+              "w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-semibold transition-all duration-150",
+              currentPage === "new"
+                ? "nav-active"
+                : "bg-primary/10 text-primary border border-primary/20 hover:bg-primary/20",
+            )}
+          >
+            <PlusCircle className="w-4 h-4 flex-shrink-0" />
+            New Project
+          </button>
+        </div>
       </nav>
 
       {/* User section */}

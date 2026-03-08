@@ -34,7 +34,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import {
   ArrowLeft,
-  Bot,
+  ArrowRight,
   Brain,
   Calendar,
   CheckCircle2,
@@ -51,14 +51,13 @@ import {
   Plus,
   RefreshCw,
   Save,
-  Send,
   Target,
   Trash2,
   Upload,
   X,
 } from "lucide-react";
 import { motion } from "motion/react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Language, Status } from "../backend.d";
 import {
@@ -91,97 +90,12 @@ import type { CategoryKind } from "../lib/projectUtils";
 
 type Page = "dashboard" | "projects" | "new" | "detail" | "editor";
 
-// ── Training Chat Types ────────────────────────────────────────
-type TrainChatMessage = {
+// ── Vocab Mapping Types ────────────────────────────────────────
+type VocabMapping = {
   id: string;
-  role: "user" | "assistant" | "system";
-  text: string;
-  isLoading?: boolean;
-  timestamp: Date;
+  shorthand: string;
+  meaning: string;
 };
-
-function genTrainId(): string {
-  return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-}
-
-const GUIDED_QUESTIONS = [
-  "What is this project for, and who is it aimed at?",
-  "What tech stack or tools are you using? (e.g. HTML/CSS, frameworks, libraries)",
-  "Describe your preferred coding style or design aesthetic.",
-  "What's the tone? (e.g. minimal, feature-rich, playful, professional)",
-  "Are there any constraints or rules the AI should always follow?",
-];
-
-async function callTrainingAI(conversationHistory: string): Promise<string> {
-  const systemPrompt =
-    "You are an AI training assistant. Your job is to ask one concise follow-up question to help understand the user's project better for AI code generation. Keep questions short and focused. Only ask ONE question.";
-
-  const response = await fetch("https://text.pollinations.ai/", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      model: "openai",
-      messages: [
-        { role: "system", content: systemPrompt },
-        {
-          role: "user",
-          content: `Here is the training conversation so far:\n\n${conversationHistory}\n\nAsk one short follow-up question to better understand this project for AI-assisted code generation.`,
-        },
-      ],
-      seed: 42,
-      private: true,
-    }),
-  });
-
-  if (!response.ok) throw new Error(`AI service error ${response.status}`);
-  const text = await response.text();
-  if (!text.trim()) throw new Error("Empty response");
-  return text.trim();
-}
-
-// ── Training Chat Bubble ───────────────────────────────────────
-function TrainChatBubble({ msg }: { msg: TrainChatMessage }) {
-  const isUser = msg.role === "user";
-  const isSystem = msg.role === "system";
-
-  return (
-    <div
-      className={cn(
-        "flex gap-2 items-start",
-        isUser ? "flex-row-reverse" : "flex-row",
-      )}
-    >
-      {!isUser && (
-        <div className="w-6 h-6 rounded-full flex-shrink-0 flex items-center justify-center mt-0.5 bg-emerald-500/20 text-emerald-400">
-          {msg.isLoading ? (
-            <Loader2 className="w-3 h-3 animate-spin" />
-          ) : (
-            <Bot className="w-3 h-3" />
-          )}
-        </div>
-      )}
-      <div
-        className={cn(
-          "max-w-[85%] rounded-xl px-3 py-2 text-xs leading-relaxed",
-          isUser
-            ? "bg-primary text-primary-foreground rounded-tr-sm"
-            : isSystem
-              ? "bg-muted/60 text-muted-foreground rounded-tl-sm border border-border/40 italic"
-              : "bg-card border border-border/60 text-foreground rounded-tl-sm",
-        )}
-      >
-        {msg.isLoading ? (
-          <span className="flex items-center gap-1.5 text-muted-foreground">
-            <Loader2 className="w-3 h-3 animate-spin" />
-            AI is thinking…
-          </span>
-        ) : (
-          msg.text
-        )}
-      </div>
-    </div>
-  );
-}
 
 interface ProjectDetailPageProps {
   projectId: bigint;
@@ -221,149 +135,106 @@ export default function ProjectDetailPage({
   // Track dirty state
   const [isDirty, setIsDirty] = useState(false);
 
-  // AI Training context — derived from localStorage for badge display
+  // Vocabulary mappings — the new training approach
+  const [vocabMappings, setVocabMappings] = useState<VocabMapping[]>(() => {
+    try {
+      const stored = localStorage.getItem(
+        `ai-training-vocab-${projectId.toString()}`,
+      );
+      return stored ? JSON.parse(stored) : [];
+    } catch {
+      return [];
+    }
+  });
+  const [vocabShorthand, setVocabShorthand] = useState("");
+  const [vocabMeaning, setVocabMeaning] = useState("");
+  const [contextExpanded, setContextExpanded] = useState(false);
+
+  // AI Training context — derived from vocab mappings
   const [trainingContext, setTrainingContext] = useState(() => {
     return localStorage.getItem(`ai-training-${projectId.toString()}`) ?? "";
   });
 
-  // Training chat state
-  const [trainMessages, setTrainMessages] = useState<TrainChatMessage[]>([
-    {
-      id: genTrainId(),
-      role: "assistant",
-      text: "Hi! I'm going to ask you a few questions to build up context for your project so the AI can give you better code suggestions. Let's start: What is this project for, and who is it aimed at?",
-      timestamp: new Date(),
-    },
-  ]);
-  const [trainInput, setTrainInput] = useState("");
-  const [isTrainWorking, setIsTrainWorking] = useState(false);
-  const [guidedQuestionIndex, setGuidedQuestionIndex] = useState(1); // next predefined question index
-  const [contextExpanded, setContextExpanded] = useState(false);
-  const trainScrollRef = useRef<HTMLDivElement>(null);
+  // Assemble the human-readable context string from vocab mappings
+  const assembleVocabContext = useCallback((mappings: VocabMapping[]) => {
+    if (mappings.length === 0) return "";
+    return mappings
+      .map((m) => `When I say "${m.shorthand}", I mean ${m.meaning}.`)
+      .join("\n");
+  }, []);
 
-  // Re-read training context from localStorage when projectId changes
+  // Re-read training vocab from localStorage when projectId changes
   useEffect(() => {
     if (!projectId) return;
-    const stored = localStorage.getItem(`ai-training-${projectId.toString()}`);
-    setTrainingContext(stored ?? "");
-  }, [projectId]);
-
-  // Auto-scroll training chat to bottom on new messages
-  // biome-ignore lint/correctness/useExhaustiveDependencies: intentional trigger on message changes
-  useEffect(() => {
-    if (trainScrollRef.current) {
-      trainScrollRef.current.scrollTop = trainScrollRef.current.scrollHeight;
+    try {
+      const stored = localStorage.getItem(
+        `ai-training-vocab-${projectId.toString()}`,
+      );
+      const mappings: VocabMapping[] = stored ? JSON.parse(stored) : [];
+      setVocabMappings(mappings);
+      const ctx = assembleVocabContext(mappings);
+      setTrainingContext(ctx);
+    } catch {
+      // ignore
     }
-  }, [trainMessages.length]);
+  }, [projectId, assembleVocabContext]);
 
-  const appendTrainingContext = useCallback(
-    (question: string, answer: string) => {
-      const newEntry = `Q: ${question}\nA: ${answer}`;
-      const existing =
-        localStorage.getItem(`ai-training-${projectId.toString()}`) ?? "";
-      const updated = existing ? `${existing}\n\n${newEntry}` : newEntry;
-      localStorage.setItem(`ai-training-${projectId.toString()}`, updated);
-      setTrainingContext(updated);
+  // Save mappings to localStorage and update training context
+  const saveVocabMappings = useCallback(
+    (mappings: VocabMapping[]) => {
+      setVocabMappings(mappings);
+      try {
+        localStorage.setItem(
+          `ai-training-vocab-${projectId.toString()}`,
+          JSON.stringify(mappings),
+        );
+      } catch {
+        // ignore
+      }
+      const ctx = assembleVocabContext(mappings);
+      localStorage.setItem(`ai-training-${projectId.toString()}`, ctx);
+      setTrainingContext(ctx);
     },
-    [projectId],
+    [projectId, assembleVocabContext],
   );
 
-  const handleTrainSubmit = useCallback(async () => {
-    const answer = trainInput.trim();
-    if (!answer || isTrainWorking) return;
-
-    // Find the last AI question
-    const lastAiMsg = [...trainMessages]
-      .reverse()
-      .find((m) => m.role === "assistant");
-    const lastQuestion = lastAiMsg?.text ?? "";
-
-    setTrainInput("");
-    setIsTrainWorking(true);
-
-    const userMsg: TrainChatMessage = {
-      id: genTrainId(),
-      role: "user",
-      text: answer,
-      timestamp: new Date(),
+  const handleAddVocabMapping = useCallback(() => {
+    const shorthand = vocabShorthand.trim();
+    const meaning = vocabMeaning.trim();
+    if (!shorthand || !meaning) return;
+    const newMapping: VocabMapping = {
+      id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      shorthand,
+      meaning,
     };
+    saveVocabMappings([...vocabMappings, newMapping]);
+    setVocabShorthand("");
+    setVocabMeaning("");
+    toast.success(`"${shorthand}" defined`);
+  }, [vocabShorthand, vocabMeaning, vocabMappings, saveVocabMappings]);
 
-    const loadingId = genTrainId();
-    const loadingMsg: TrainChatMessage = {
-      id: loadingId,
-      role: "assistant",
-      text: "",
-      isLoading: true,
-      timestamp: new Date(),
-    };
+  const handleDeleteVocabMapping = useCallback(
+    (id: string) => {
+      saveVocabMappings(vocabMappings.filter((m) => m.id !== id));
+    },
+    [vocabMappings, saveVocabMappings],
+  );
 
-    setTrainMessages((prev) => [...prev, userMsg, loadingMsg]);
-
-    // Append Q&A to context
-    appendTrainingContext(lastQuestion, answer);
-
-    // Build conversation history for the AI
-    const history = [...trainMessages, userMsg]
-      .filter((m) => m.role !== "system")
-      .map((m) => `${m.role === "user" ? "User" : "AI"}: ${m.text}`)
-      .join("\n");
-
-    let nextQuestion: string;
-    try {
-      nextQuestion = await callTrainingAI(history);
-    } catch {
-      // Fall back to next predefined question
-      const nextIdx = guidedQuestionIndex;
-      if (nextIdx < GUIDED_QUESTIONS.length) {
-        nextQuestion = GUIDED_QUESTIONS[nextIdx];
-        setGuidedQuestionIndex(nextIdx + 1);
-      } else {
-        nextQuestion =
-          "Is there anything else the AI should know about this project?";
-      }
-    }
-
-    setTrainMessages((prev) =>
-      prev.map((m) =>
-        m.id === loadingId
-          ? {
-              ...m,
-              text: nextQuestion,
-              isLoading: false,
-            }
-          : m,
-      ),
-    );
-
-    setIsTrainWorking(false);
-  }, [
-    trainInput,
-    isTrainWorking,
-    trainMessages,
-    guidedQuestionIndex,
-    appendTrainingContext,
-  ]);
-
-  const handleTrainKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === "Enter" && !e.shiftKey) {
+  const handleVocabKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Enter") {
       e.preventDefault();
-      handleTrainSubmit();
+      handleAddVocabMapping();
     }
   };
 
   const handleResetTraining = () => {
     localStorage.removeItem(`ai-training-${projectId.toString()}`);
+    localStorage.removeItem(`ai-training-vocab-${projectId.toString()}`);
+    setVocabMappings([]);
     setTrainingContext("");
-    setGuidedQuestionIndex(1);
-    setTrainMessages([
-      {
-        id: genTrainId(),
-        role: "assistant",
-        text: "Training reset! Let's start fresh. What is this project for, and who is it aimed at?",
-        timestamp: new Date(),
-      },
-    ]);
-    toast.success("Training context cleared");
+    setVocabShorthand("");
+    setVocabMeaning("");
+    toast.success("Training vocabulary cleared");
   };
 
   // New file dialog
@@ -1202,21 +1073,21 @@ More content here.`;
                 className="max-w-2xl"
               >
                 {/* Header */}
-                <div className="flex items-center gap-3 mb-4">
+                <div className="flex items-center gap-3 mb-5">
                   <div className="w-9 h-9 rounded-lg bg-emerald-500/15 border border-emerald-500/25 flex items-center justify-center flex-shrink-0">
                     <Brain className="w-4 h-4 text-emerald-400" />
                   </div>
                   <div className="flex-1 min-w-0">
                     <h3 className="text-sm font-semibold text-foreground leading-tight">
-                      AI Training Interview
+                      Teach the AI Your Language
                     </h3>
                     <p className="text-xs text-muted-foreground mt-0.5">
-                      Answer the AI's questions to build up project context.
-                      This context is used automatically in the code editor.
+                      Define what your words mean so the AI understands you when
+                      you give it instructions.
                     </p>
                   </div>
                   <div className="flex items-center gap-2 flex-shrink-0">
-                    {trainingContext.trim().length > 0 && (
+                    {vocabMappings.length > 0 && (
                       <Badge className="text-xs border bg-emerald-500/15 text-emerald-400 border-emerald-500/25 gap-1">
                         <Brain className="w-3 h-3" />
                         Trained
@@ -1227,7 +1098,7 @@ More content here.`;
                       size="sm"
                       onClick={handleResetTraining}
                       className="h-7 px-2 text-xs text-muted-foreground hover:text-destructive hover:bg-destructive/10 gap-1"
-                      data-ocid="project_detail.train_ai.reset_button"
+                      data-ocid="train_ai.reset.button"
                     >
                       <RefreshCw className="w-3 h-3" />
                       Reset
@@ -1235,62 +1106,111 @@ More content here.`;
                   </div>
                 </div>
 
-                {/* Chat panel */}
-                <div className="bg-card border border-border rounded-xl overflow-hidden">
-                  {/* Message thread */}
-                  <div
-                    ref={trainScrollRef}
-                    className="p-4 space-y-3 overflow-y-auto scrollbar-thin"
-                    style={{ height: "320px" }}
-                    data-ocid="project_detail.train_ai.chat_panel"
-                  >
-                    {trainMessages.map((msg) => (
-                      <TrainChatBubble key={msg.id} msg={msg} />
-                    ))}
-                  </div>
-
-                  {/* Input area */}
-                  <div className="border-t border-border p-3 flex gap-2 items-end bg-card/60">
-                    <textarea
-                      value={trainInput}
-                      onChange={(e) => setTrainInput(e.target.value)}
-                      onKeyDown={handleTrainKeyDown}
-                      placeholder="Type your answer… (Enter to send, Shift+Enter for newline)"
-                      rows={3}
-                      disabled={isTrainWorking}
-                      className="flex-1 p-2.5 bg-background border border-border rounded-lg text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-ring resize-none scrollbar-thin disabled:opacity-60 leading-relaxed"
-                      data-ocid="project_detail.train_ai.textarea"
+                {/* Add mapping form */}
+                <div className="bg-card border border-border rounded-xl p-4 mb-4">
+                  <p className="text-xs font-medium text-muted-foreground mb-3">
+                    Add a new definition
+                  </p>
+                  <div className="flex flex-col sm:flex-row gap-2">
+                    <Input
+                      value={vocabShorthand}
+                      onChange={(e) => setVocabShorthand(e.target.value)}
+                      onKeyDown={handleVocabKeyDown}
+                      placeholder="When I say…"
+                      className="bg-background border-border text-sm h-9 flex-1"
+                      data-ocid="train_ai.shorthand.input"
+                    />
+                    <div className="hidden sm:flex items-center text-muted-foreground flex-shrink-0 px-1">
+                      <ArrowRight className="w-3.5 h-3.5" />
+                    </div>
+                    <Input
+                      value={vocabMeaning}
+                      onChange={(e) => setVocabMeaning(e.target.value)}
+                      onKeyDown={handleVocabKeyDown}
+                      placeholder="I mean…"
+                      className="bg-background border-border text-sm h-9 flex-1"
+                      data-ocid="train_ai.meaning.input"
                     />
                     <Button
-                      onClick={handleTrainSubmit}
-                      disabled={!trainInput.trim() || isTrainWorking}
-                      className="h-9 px-3 text-xs bg-emerald-600 hover:bg-emerald-700 text-white gap-1.5 flex-shrink-0 self-end"
-                      data-ocid="project_detail.train_ai.submit_button"
+                      onClick={handleAddVocabMapping}
+                      disabled={!vocabShorthand.trim() || !vocabMeaning.trim()}
+                      size="sm"
+                      className="h-9 px-4 text-xs bg-emerald-600 hover:bg-emerald-700 text-white gap-1.5 flex-shrink-0"
+                      data-ocid="train_ai.add.button"
                     >
-                      {isTrainWorking ? (
-                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                      ) : (
-                        <Send className="w-3.5 h-3.5" />
-                      )}
-                      {isTrainWorking ? "Thinking…" : "Send"}
+                      <Plus className="w-3.5 h-3.5" />
+                      Add
                     </Button>
                   </div>
                 </div>
 
+                {/* Vocabulary list */}
+                <div className="bg-card border border-border rounded-xl overflow-hidden mb-4">
+                  {vocabMappings.length === 0 ? (
+                    <div
+                      className="flex flex-col items-center justify-center py-10 text-center px-4"
+                      data-ocid="train_ai.mappings.empty_state"
+                    >
+                      <Brain className="w-8 h-8 text-muted-foreground/25 mb-2" />
+                      <p className="text-sm text-muted-foreground font-medium mb-0.5">
+                        No terms defined yet
+                      </p>
+                      <p className="text-xs text-muted-foreground/60">
+                        Add your first definition above.
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="divide-y divide-border/60">
+                      {vocabMappings.map((mapping, idx) => (
+                        <motion.div
+                          key={mapping.id}
+                          initial={{ opacity: 0, x: -8 }}
+                          animate={{ opacity: 1, x: 0 }}
+                          transition={{ duration: 0.15, delay: idx * 0.04 }}
+                          className="flex items-center gap-3 px-4 py-3 group hover:bg-muted/30 transition-colors"
+                          data-ocid={`train_ai.mapping.item.${idx + 1}`}
+                        >
+                          <span className="font-semibold text-sm text-foreground font-mono bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded px-2 py-0.5 flex-shrink-0">
+                            {mapping.shorthand}
+                          </span>
+                          <ArrowRight className="w-3.5 h-3.5 text-muted-foreground/50 flex-shrink-0" />
+                          <span className="text-sm text-foreground/80 flex-1 leading-snug">
+                            {mapping.meaning}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteVocabMapping(mapping.id)}
+                            className="opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-destructive p-1 rounded flex-shrink-0"
+                            title="Remove definition"
+                            data-ocid={
+                              idx === 0
+                                ? "train_ai.mapping.delete_button.1"
+                                : undefined
+                            }
+                          >
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        </motion.div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
                 {/* Assembled context (collapsible) */}
-                <div className="mt-3 bg-card/50 border border-border/60 rounded-xl overflow-hidden">
+                <div className="bg-card/50 border border-border/60 rounded-xl overflow-hidden">
                   <button
                     type="button"
                     onClick={() => setContextExpanded((v) => !v)}
                     className="w-full flex items-center justify-between px-4 py-2.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
-                    data-ocid="project_detail.train_ai.context_toggle"
+                    data-ocid="train_ai.context_toggle"
                   >
                     <span className="font-medium flex items-center gap-1.5">
                       <Brain className="w-3.5 h-3.5" />
                       View assembled context
-                      {trainingContext.trim().length > 0 && (
+                      {vocabMappings.length > 0 && (
                         <span className="bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 rounded-full px-1.5 font-mono">
-                          {trainingContext.trim().split("\n\n").length} entries
+                          {vocabMappings.length}{" "}
+                          {vocabMappings.length === 1 ? "term" : "terms"}
                         </span>
                       )}
                     </span>
@@ -1302,14 +1222,14 @@ More content here.`;
                   </button>
                   {contextExpanded && (
                     <div className="border-t border-border/60 px-4 pb-4 pt-3">
-                      {trainingContext.trim().length === 0 ? (
+                      {vocabMappings.length === 0 ? (
                         <p className="text-xs text-muted-foreground/60 italic">
-                          No context assembled yet. Answer the AI's questions
-                          above to build it up.
+                          No terms defined yet. Add definitions above to build
+                          up your AI context.
                         </p>
                       ) : (
                         <pre className="text-xs text-foreground/80 font-mono whitespace-pre-wrap leading-relaxed bg-background rounded-lg p-3 border border-border/60 overflow-y-auto max-h-48 scrollbar-thin">
-                          {trainingContext}
+                          {assembleVocabContext(vocabMappings)}
                         </pre>
                       )}
                     </div>

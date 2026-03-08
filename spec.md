@@ -1,25 +1,38 @@
 # AI Project Hub
 
 ## Current State
-The app is a full-stack ICP app (Motoko backend + React frontend) that lets users log in via Internet Identity, manage AI projects, and edit code files in a split editor with live preview. The code editor has an AI chat panel that currently calls OpenAI's API directly from the frontend using an API key the user must supply manually. Without a key it falls back to basic client-side pattern matching.
+The "Train AI" tab in ProjectDetailPage.tsx is a single textarea where users paste a wall of text as training context for the AI. It has a save/clear button and a character counter. The training context is stored in localStorage and injected into AI chat prompts in the code editor.
 
 ## Requested Changes (Diff)
 
 ### Add
-- Backend `aiEditCode(language: Text, currentContent: Text, instruction: Text)` function that uses HTTP outcalls to call the Cloudflare Workers AI REST API (free, no user key needed) with the `@cf/meta/llama-3.1-8b-instruct` model to apply natural language code editing instructions
-- Backend transformation function for the HTTP outcall response
+- A chat-style interface in the "Train AI" tab that mirrors the AI chat panel in CodeEditorPage
+- AI asks the user questions to build up training context through a guided conversation (e.g. "What is this project for?", "What tech stack are you using?", "What coding style do you prefer?")
+- Each user response is incorporated into a growing training context summary
+- Chat thread shows AI questions and user answers as bubbles (same ChatBubble pattern as the code editor)
+- A text input + send button at the bottom for the user to respond
+- A "Generated Context" collapsible or side panel showing what training context has been assembled so far
+- Clear chat / reset button
 
 ### Modify
-- Frontend `CodeEditorPage.tsx`: remove the OpenAI API key requirement, API key modal, and localStorage key storage; replace the `callOpenAI` function with a call to the new backend `aiEditCode` endpoint; update the AI chat panel UI to remove all "add your API key" messaging, show the AI as always connected and ready
+- Replace the single textarea in the "Train AI" tab with the chat-based training interface
+- The training context stored in localStorage should still be the final assembled text (so the code editor AI chat still works the same way)
+- The "AI Trained" badge on the tab should still appear when training context exists
 
 ### Remove
-- `OPENAI_KEY_STORAGE` constant and all localStorage key management
-- `ApiKeyModal` component and its open/close state
-- `callOpenAI` function
-- "No API key" banner and "Offline" badge in the chat panel header
-- Settings gear icon button that opened the API key modal
+- The single large textarea for manual training text entry
+- The character counter UI (replace with assembled context view)
+- The "What to write" tips card (replaced by the guided chat experience)
 
 ## Implementation Plan
-1. Add `aiEditCode` Motoko function to `main.mo` using the http-outcalls module to POST to Cloudflare Workers AI API
-2. Regenerate backend bindings (backend.d.ts will include the new method)
-3. Update `CodeEditorPage.tsx`: remove OpenAI/key logic, add a `useAiEditCode` hook call that calls the backend, simplify the chat panel to always show connected state
+1. In ProjectDetailPage.tsx, replace the Train AI tab content with a new component `TrainingChatPanel`
+2. The panel has:
+   - A scrollable chat thread showing AI questions and user answers as bubbles
+   - An input area at the bottom (textarea + send button)
+   - An AI that starts by asking guided questions: project purpose, tech stack, style preferences, tone/audience, constraints
+   - Each answer gets appended to the assembled training context stored in localStorage
+   - A small "Trained context" expandable section showing what has been saved
+3. The AI interviewer uses Pollinations AI (same free API already used in CodeEditorPage) to generate follow-up questions based on prior answers
+4. Fallback: if AI is unavailable, cycle through a predefined list of training questions
+5. A "Reset Training" button clears the chat and localStorage context
+6. The "AI Trained" badge still appears on the tab when context exists

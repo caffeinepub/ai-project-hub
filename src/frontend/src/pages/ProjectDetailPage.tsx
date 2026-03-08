@@ -34,9 +34,12 @@ import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import {
   ArrowLeft,
+  Bot,
   Brain,
   Calendar,
   CheckCircle2,
+  ChevronDown,
+  ChevronUp,
   Circle,
   Code2,
   ExternalLink,
@@ -46,14 +49,16 @@ import {
   ImageIcon,
   Loader2,
   Plus,
+  RefreshCw,
   Save,
+  Send,
   Target,
   Trash2,
   Upload,
   X,
 } from "lucide-react";
 import { motion } from "motion/react";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Language, Status } from "../backend.d";
 import {
@@ -85,6 +90,98 @@ import {
 import type { CategoryKind } from "../lib/projectUtils";
 
 type Page = "dashboard" | "projects" | "new" | "detail" | "editor";
+
+// ── Training Chat Types ────────────────────────────────────────
+type TrainChatMessage = {
+  id: string;
+  role: "user" | "assistant" | "system";
+  text: string;
+  isLoading?: boolean;
+  timestamp: Date;
+};
+
+function genTrainId(): string {
+  return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+const GUIDED_QUESTIONS = [
+  "What is this project for, and who is it aimed at?",
+  "What tech stack or tools are you using? (e.g. HTML/CSS, frameworks, libraries)",
+  "Describe your preferred coding style or design aesthetic.",
+  "What's the tone? (e.g. minimal, feature-rich, playful, professional)",
+  "Are there any constraints or rules the AI should always follow?",
+];
+
+async function callTrainingAI(conversationHistory: string): Promise<string> {
+  const systemPrompt =
+    "You are an AI training assistant. Your job is to ask one concise follow-up question to help understand the user's project better for AI code generation. Keep questions short and focused. Only ask ONE question.";
+
+  const response = await fetch("https://text.pollinations.ai/", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model: "openai",
+      messages: [
+        { role: "system", content: systemPrompt },
+        {
+          role: "user",
+          content: `Here is the training conversation so far:\n\n${conversationHistory}\n\nAsk one short follow-up question to better understand this project for AI-assisted code generation.`,
+        },
+      ],
+      seed: 42,
+      private: true,
+    }),
+  });
+
+  if (!response.ok) throw new Error(`AI service error ${response.status}`);
+  const text = await response.text();
+  if (!text.trim()) throw new Error("Empty response");
+  return text.trim();
+}
+
+// ── Training Chat Bubble ───────────────────────────────────────
+function TrainChatBubble({ msg }: { msg: TrainChatMessage }) {
+  const isUser = msg.role === "user";
+  const isSystem = msg.role === "system";
+
+  return (
+    <div
+      className={cn(
+        "flex gap-2 items-start",
+        isUser ? "flex-row-reverse" : "flex-row",
+      )}
+    >
+      {!isUser && (
+        <div className="w-6 h-6 rounded-full flex-shrink-0 flex items-center justify-center mt-0.5 bg-emerald-500/20 text-emerald-400">
+          {msg.isLoading ? (
+            <Loader2 className="w-3 h-3 animate-spin" />
+          ) : (
+            <Bot className="w-3 h-3" />
+          )}
+        </div>
+      )}
+      <div
+        className={cn(
+          "max-w-[85%] rounded-xl px-3 py-2 text-xs leading-relaxed",
+          isUser
+            ? "bg-primary text-primary-foreground rounded-tr-sm"
+            : isSystem
+              ? "bg-muted/60 text-muted-foreground rounded-tl-sm border border-border/40 italic"
+              : "bg-card border border-border/60 text-foreground rounded-tl-sm",
+        )}
+      >
+        {msg.isLoading ? (
+          <span className="flex items-center gap-1.5 text-muted-foreground">
+            <Loader2 className="w-3 h-3 animate-spin" />
+            AI is thinking…
+          </span>
+        ) : (
+          msg.text
+        )}
+      </div>
+    </div>
+  );
+}
 
 interface ProjectDetailPageProps {
   projectId: bigint;
@@ -124,31 +221,148 @@ export default function ProjectDetailPage({
   // Track dirty state
   const [isDirty, setIsDirty] = useState(false);
 
-  // AI Training context
-  const [trainingContext, setTrainingContext] = useState("");
-  const [trainingDirty, setTrainingDirty] = useState(false);
-  const [clearTrainingDialogOpen, setClearTrainingDialogOpen] = useState(false);
+  // AI Training context — derived from localStorage for badge display
+  const [trainingContext, setTrainingContext] = useState(() => {
+    return localStorage.getItem(`ai-training-${projectId.toString()}`) ?? "";
+  });
 
+  // Training chat state
+  const [trainMessages, setTrainMessages] = useState<TrainChatMessage[]>([
+    {
+      id: genTrainId(),
+      role: "assistant",
+      text: "Hi! I'm going to ask you a few questions to build up context for your project so the AI can give you better code suggestions. Let's start: What is this project for, and who is it aimed at?",
+      timestamp: new Date(),
+    },
+  ]);
+  const [trainInput, setTrainInput] = useState("");
+  const [isTrainWorking, setIsTrainWorking] = useState(false);
+  const [guidedQuestionIndex, setGuidedQuestionIndex] = useState(1); // next predefined question index
+  const [contextExpanded, setContextExpanded] = useState(false);
+  const trainScrollRef = useRef<HTMLDivElement>(null);
+
+  // Re-read training context from localStorage when projectId changes
   useEffect(() => {
     if (!projectId) return;
     const stored = localStorage.getItem(`ai-training-${projectId.toString()}`);
-    if (stored) setTrainingContext(stored);
+    setTrainingContext(stored ?? "");
   }, [projectId]);
 
-  const handleSaveTraining = () => {
-    localStorage.setItem(
-      `ai-training-${projectId.toString()}`,
-      trainingContext,
+  // Auto-scroll training chat to bottom on new messages
+  // biome-ignore lint/correctness/useExhaustiveDependencies: intentional trigger on message changes
+  useEffect(() => {
+    if (trainScrollRef.current) {
+      trainScrollRef.current.scrollTop = trainScrollRef.current.scrollHeight;
+    }
+  }, [trainMessages.length]);
+
+  const appendTrainingContext = useCallback(
+    (question: string, answer: string) => {
+      const newEntry = `Q: ${question}\nA: ${answer}`;
+      const existing =
+        localStorage.getItem(`ai-training-${projectId.toString()}`) ?? "";
+      const updated = existing ? `${existing}\n\n${newEntry}` : newEntry;
+      localStorage.setItem(`ai-training-${projectId.toString()}`, updated);
+      setTrainingContext(updated);
+    },
+    [projectId],
+  );
+
+  const handleTrainSubmit = useCallback(async () => {
+    const answer = trainInput.trim();
+    if (!answer || isTrainWorking) return;
+
+    // Find the last AI question
+    const lastAiMsg = [...trainMessages]
+      .reverse()
+      .find((m) => m.role === "assistant");
+    const lastQuestion = lastAiMsg?.text ?? "";
+
+    setTrainInput("");
+    setIsTrainWorking(true);
+
+    const userMsg: TrainChatMessage = {
+      id: genTrainId(),
+      role: "user",
+      text: answer,
+      timestamp: new Date(),
+    };
+
+    const loadingId = genTrainId();
+    const loadingMsg: TrainChatMessage = {
+      id: loadingId,
+      role: "assistant",
+      text: "",
+      isLoading: true,
+      timestamp: new Date(),
+    };
+
+    setTrainMessages((prev) => [...prev, userMsg, loadingMsg]);
+
+    // Append Q&A to context
+    appendTrainingContext(lastQuestion, answer);
+
+    // Build conversation history for the AI
+    const history = [...trainMessages, userMsg]
+      .filter((m) => m.role !== "system")
+      .map((m) => `${m.role === "user" ? "User" : "AI"}: ${m.text}`)
+      .join("\n");
+
+    let nextQuestion: string;
+    try {
+      nextQuestion = await callTrainingAI(history);
+    } catch {
+      // Fall back to next predefined question
+      const nextIdx = guidedQuestionIndex;
+      if (nextIdx < GUIDED_QUESTIONS.length) {
+        nextQuestion = GUIDED_QUESTIONS[nextIdx];
+        setGuidedQuestionIndex(nextIdx + 1);
+      } else {
+        nextQuestion =
+          "Is there anything else the AI should know about this project?";
+      }
+    }
+
+    setTrainMessages((prev) =>
+      prev.map((m) =>
+        m.id === loadingId
+          ? {
+              ...m,
+              text: nextQuestion,
+              isLoading: false,
+            }
+          : m,
+      ),
     );
-    setTrainingDirty(false);
-    toast.success("AI training saved");
+
+    setIsTrainWorking(false);
+  }, [
+    trainInput,
+    isTrainWorking,
+    trainMessages,
+    guidedQuestionIndex,
+    appendTrainingContext,
+  ]);
+
+  const handleTrainKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      handleTrainSubmit();
+    }
   };
 
-  const handleClearTraining = () => {
+  const handleResetTraining = () => {
     localStorage.removeItem(`ai-training-${projectId.toString()}`);
     setTrainingContext("");
-    setTrainingDirty(false);
-    setClearTrainingDialogOpen(false);
+    setGuidedQuestionIndex(1);
+    setTrainMessages([
+      {
+        id: genTrainId(),
+        role: "assistant",
+        text: "Training reset! Let's start fresh. What is this project for, and who is it aimed at?",
+        timestamp: new Date(),
+      },
+    ]);
     toast.success("Training context cleared");
   };
 
@@ -985,185 +1199,123 @@ More content here.`;
                 initial={{ opacity: 0, y: 8 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.2 }}
+                className="max-w-2xl"
               >
-                <div className="max-w-2xl">
-                  <div className="bg-card border border-border rounded-xl p-6 space-y-4">
-                    {/* Header */}
-                    <div className="flex items-start gap-3">
-                      <div className="w-9 h-9 rounded-lg bg-emerald-500/15 border border-emerald-500/25 flex items-center justify-center flex-shrink-0">
-                        <Brain className="w-4.5 h-4.5 text-emerald-400" />
-                      </div>
-                      <div>
-                        <h3 className="text-sm font-semibold text-foreground leading-tight">
-                          AI Training Context
-                        </h3>
-                        <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed">
-                          Teach the AI about this project. Write anything:
-                          goals, tech stack, coding style, tone, constraints.
-                          The AI will use this every time you chat in the code
-                          editor.
-                        </p>
-                      </div>
-                      {trainingContext.trim().length > 0 && (
-                        <Badge className="flex-shrink-0 text-xs border bg-emerald-500/15 text-emerald-400 border-emerald-500/25 gap-1 ml-auto">
-                          <Brain className="w-3 h-3" />
-                          AI Trained
-                        </Badge>
-                      )}
-                    </div>
-
-                    {/* Textarea */}
-                    <div className="space-y-1.5">
-                      <Textarea
-                        value={trainingContext}
-                        onChange={(e) => {
-                          const val = e.target.value.slice(0, 10000);
-                          setTrainingContext(val);
-                          setTrainingDirty(true);
-                        }}
-                        placeholder={
-                          "Example:\n- This is a dark-themed HTML landing page for a meditation app\n- Use CSS custom properties for colors\n- Keep the design minimal and calming\n- Font: system-ui, prefer lowercase headings\n- Always add smooth CSS transitions to interactive elements"
-                        }
-                        rows={12}
-                        className="bg-background border-border text-sm resize-none font-mono leading-relaxed"
-                        data-ocid="project_detail.train_ai.textarea"
-                      />
-                      <div className="flex items-center justify-between">
-                        <p
-                          className={cn(
-                            "text-xs font-mono",
-                            trainingContext.length > 9000
-                              ? "text-orange-400"
-                              : "text-muted-foreground/60",
-                          )}
-                        >
-                          {trainingContext.length.toLocaleString()} / 10,000
-                          characters
-                        </p>
-                        {trainingDirty && (
-                          <span className="text-xs text-orange-400 font-mono">
-                            ● Unsaved
-                          </span>
-                        )}
-                      </div>
-                    </div>
-
-                    {/* Action buttons */}
-                    <div className="flex items-center gap-2 pt-1">
-                      <Button
-                        onClick={handleSaveTraining}
-                        disabled={
-                          !trainingDirty && trainingContext.length === 0
-                        }
-                        className="h-9 text-sm bg-emerald-600 hover:bg-emerald-700 text-white gap-1.5"
-                        data-ocid="project_detail.train_ai.save_button"
-                      >
-                        <Save className="w-3.5 h-3.5" />
-                        Save Training
-                      </Button>
-
-                      {trainingContext.trim().length > 0 && (
-                        <Button
-                          variant="ghost"
-                          onClick={() => setClearTrainingDialogOpen(true)}
-                          className="h-9 text-sm text-destructive hover:bg-destructive/10 hover:text-destructive gap-1.5"
-                          data-ocid="project_detail.train_ai.delete_button"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                          Clear
-                        </Button>
-                      )}
-                    </div>
+                {/* Header */}
+                <div className="flex items-center gap-3 mb-4">
+                  <div className="w-9 h-9 rounded-lg bg-emerald-500/15 border border-emerald-500/25 flex items-center justify-center flex-shrink-0">
+                    <Brain className="w-4 h-4 text-emerald-400" />
                   </div>
-
-                  {/* Tips card */}
-                  <div className="mt-4 bg-card/50 border border-border/60 rounded-xl p-4">
-                    <h4 className="text-xs font-semibold text-foreground/80 mb-2">
-                      What to write
-                    </h4>
-                    <ul className="space-y-1.5 text-xs text-muted-foreground">
-                      <li className="flex items-start gap-2">
-                        <span className="text-emerald-400 mt-0.5">•</span>
-                        <span>
-                          <strong className="text-foreground/70">
-                            Purpose
-                          </strong>{" "}
-                          — what this project is and who it's for
-                        </span>
-                      </li>
-                      <li className="flex items-start gap-2">
-                        <span className="text-emerald-400 mt-0.5">•</span>
-                        <span>
-                          <strong className="text-foreground/70">
-                            Tech stack
-                          </strong>{" "}
-                          — HTML, CSS frameworks, libraries, APIs
-                        </span>
-                      </li>
-                      <li className="flex items-start gap-2">
-                        <span className="text-emerald-400 mt-0.5">•</span>
-                        <span>
-                          <strong className="text-foreground/70">
-                            Style rules
-                          </strong>{" "}
-                          — color palette, fonts, spacing preferences
-                        </span>
-                      </li>
-                      <li className="flex items-start gap-2">
-                        <span className="text-emerald-400 mt-0.5">•</span>
-                        <span>
-                          <strong className="text-foreground/70">Tone</strong> —
-                          formal, playful, minimal, feature-rich
-                        </span>
-                      </li>
-                      <li className="flex items-start gap-2">
-                        <span className="text-emerald-400 mt-0.5">•</span>
-                        <span>
-                          <strong className="text-foreground/70">
-                            Constraints
-                          </strong>{" "}
-                          — no external CDNs, mobile-first, accessibility
-                          requirements
-                        </span>
-                      </li>
-                    </ul>
+                  <div className="flex-1 min-w-0">
+                    <h3 className="text-sm font-semibold text-foreground leading-tight">
+                      AI Training Interview
+                    </h3>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      Answer the AI's questions to build up project context.
+                      This context is used automatically in the code editor.
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2 flex-shrink-0">
+                    {trainingContext.trim().length > 0 && (
+                      <Badge className="text-xs border bg-emerald-500/15 text-emerald-400 border-emerald-500/25 gap-1">
+                        <Brain className="w-3 h-3" />
+                        Trained
+                      </Badge>
+                    )}
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={handleResetTraining}
+                      className="h-7 px-2 text-xs text-muted-foreground hover:text-destructive hover:bg-destructive/10 gap-1"
+                      data-ocid="project_detail.train_ai.reset_button"
+                    >
+                      <RefreshCw className="w-3 h-3" />
+                      Reset
+                    </Button>
                   </div>
                 </div>
-              </motion.div>
 
-              {/* Clear training AlertDialog */}
-              <AlertDialog
-                open={clearTrainingDialogOpen}
-                onOpenChange={setClearTrainingDialogOpen}
-              >
-                <AlertDialogContent
-                  className="bg-card border-border"
-                  data-ocid="project_detail.train_ai.clear_dialog"
-                >
-                  <AlertDialogHeader>
-                    <AlertDialogTitle>
-                      Clear AI training context?
-                    </AlertDialogTitle>
-                    <AlertDialogDescription>
-                      This will permanently remove the training instructions for
-                      this project. The AI will no longer have project-specific
-                      context when you chat in the editor.
-                    </AlertDialogDescription>
-                  </AlertDialogHeader>
-                  <AlertDialogFooter>
-                    <AlertDialogCancel data-ocid="project_detail.train_ai.clear_cancel_button">
-                      Cancel
-                    </AlertDialogCancel>
-                    <AlertDialogAction
-                      onClick={handleClearTraining}
-                      className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                      data-ocid="project_detail.train_ai.clear_confirm_button"
+                {/* Chat panel */}
+                <div className="bg-card border border-border rounded-xl overflow-hidden">
+                  {/* Message thread */}
+                  <div
+                    ref={trainScrollRef}
+                    className="p-4 space-y-3 overflow-y-auto scrollbar-thin"
+                    style={{ height: "320px" }}
+                    data-ocid="project_detail.train_ai.chat_panel"
+                  >
+                    {trainMessages.map((msg) => (
+                      <TrainChatBubble key={msg.id} msg={msg} />
+                    ))}
+                  </div>
+
+                  {/* Input area */}
+                  <div className="border-t border-border p-3 flex gap-2 items-end bg-card/60">
+                    <textarea
+                      value={trainInput}
+                      onChange={(e) => setTrainInput(e.target.value)}
+                      onKeyDown={handleTrainKeyDown}
+                      placeholder="Type your answer… (Enter to send, Shift+Enter for newline)"
+                      rows={3}
+                      disabled={isTrainWorking}
+                      className="flex-1 p-2.5 bg-background border border-border rounded-lg text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-ring resize-none scrollbar-thin disabled:opacity-60 leading-relaxed"
+                      data-ocid="project_detail.train_ai.textarea"
+                    />
+                    <Button
+                      onClick={handleTrainSubmit}
+                      disabled={!trainInput.trim() || isTrainWorking}
+                      className="h-9 px-3 text-xs bg-emerald-600 hover:bg-emerald-700 text-white gap-1.5 flex-shrink-0 self-end"
+                      data-ocid="project_detail.train_ai.submit_button"
                     >
-                      Clear Training
-                    </AlertDialogAction>
-                  </AlertDialogFooter>
-                </AlertDialogContent>
-              </AlertDialog>
+                      {isTrainWorking ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      ) : (
+                        <Send className="w-3.5 h-3.5" />
+                      )}
+                      {isTrainWorking ? "Thinking…" : "Send"}
+                    </Button>
+                  </div>
+                </div>
+
+                {/* Assembled context (collapsible) */}
+                <div className="mt-3 bg-card/50 border border-border/60 rounded-xl overflow-hidden">
+                  <button
+                    type="button"
+                    onClick={() => setContextExpanded((v) => !v)}
+                    className="w-full flex items-center justify-between px-4 py-2.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
+                    data-ocid="project_detail.train_ai.context_toggle"
+                  >
+                    <span className="font-medium flex items-center gap-1.5">
+                      <Brain className="w-3.5 h-3.5" />
+                      View assembled context
+                      {trainingContext.trim().length > 0 && (
+                        <span className="bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 rounded-full px-1.5 font-mono">
+                          {trainingContext.trim().split("\n\n").length} entries
+                        </span>
+                      )}
+                    </span>
+                    {contextExpanded ? (
+                      <ChevronUp className="w-3.5 h-3.5" />
+                    ) : (
+                      <ChevronDown className="w-3.5 h-3.5" />
+                    )}
+                  </button>
+                  {contextExpanded && (
+                    <div className="border-t border-border/60 px-4 pb-4 pt-3">
+                      {trainingContext.trim().length === 0 ? (
+                        <p className="text-xs text-muted-foreground/60 italic">
+                          No context assembled yet. Answer the AI's questions
+                          above to build it up.
+                        </p>
+                      ) : (
+                        <pre className="text-xs text-foreground/80 font-mono whitespace-pre-wrap leading-relaxed bg-background rounded-lg p-3 border border-border/60 overflow-y-auto max-h-48 scrollbar-thin">
+                          {trainingContext}
+                        </pre>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </motion.div>
             </TabsContent>
 
             {/* Code Files tab */}

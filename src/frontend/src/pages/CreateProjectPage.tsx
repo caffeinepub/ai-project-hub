@@ -3,10 +3,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
-import { useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Loader2, RefreshCw, Sparkles, WifiOff } from "lucide-react";
+import { ArrowLeft, Loader2, Sparkles } from "lucide-react";
 import { motion } from "motion/react";
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { toast } from "sonner";
 import { useActor } from "../hooks/useActor";
 import { useCreateProject } from "../hooks/useQueries";
@@ -26,46 +25,9 @@ export default function CreateProjectPage({
   const [categoryKind, setCategoryKind] = useState<CategoryKind | "">("");
   const [otherLabel, setOtherLabel] = useState("");
   const [description, setDescription] = useState("");
-  const [connectionTimedOut, setConnectionTimedOut] = useState(false);
   const createProject = useCreateProject();
   const { actor, isFetching: actorLoading } = useActor();
-  const queryClient = useQueryClient();
-  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // isReady: actor is available and not still fetching. connectionTimedOut only
-  // blocks if actor is still absent — once actor is present we're always ready.
   const isReady = !!actor && !actorLoading;
-
-  // Start a 30s timeout while the backend is loading
-  useEffect(() => {
-    if (actorLoading && !actor) {
-      // Clear any existing timeout before starting a new one
-      if (timeoutRef.current) clearTimeout(timeoutRef.current);
-      timeoutRef.current = setTimeout(() => {
-        setConnectionTimedOut(true);
-      }, 30000);
-    } else {
-      // Backend resolved (or actor appeared) — clear timeout and reset timed-out flag
-      if (timeoutRef.current) {
-        clearTimeout(timeoutRef.current);
-        timeoutRef.current = null;
-      }
-      if (actor) {
-        setConnectionTimedOut(false);
-      }
-    }
-    return () => {
-      if (timeoutRef.current) clearTimeout(timeoutRef.current);
-    };
-  }, [actorLoading, actor]);
-
-  const handleRetryConnection = () => {
-    setConnectionTimedOut(false);
-    // Use predicate to match ["actor", *] regardless of principal suffix,
-    // since staleTime is Infinity the exact key won't match a prefix query
-    queryClient.refetchQueries({
-      predicate: (q) => q.queryKey[0] === "actor",
-    });
-  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -96,11 +58,8 @@ export default function CreateProjectPage({
       toast.success("Project created!");
       onNavigate("detail", project.id);
     } catch (err) {
-      // onError in the mutation already shows a toast, but we catch here to
-      // prevent an unhandled rejection from breaking the form state
       const message = err instanceof Error ? err.message : String(err);
       console.error("Create project error:", err);
-      // Show the actual error so the user knows what went wrong
       if (message && !message.includes("Not authenticated")) {
         toast.error(`Could not create project: ${message}`);
       }
@@ -241,70 +200,6 @@ export default function CreateProjectPage({
             />
           </div>
 
-          {/* Actor not ready banner */}
-          {!actor && (
-            <motion.div
-              initial={{ opacity: 0, y: 4 }}
-              animate={{ opacity: 1, y: 0 }}
-              key={connectionTimedOut ? "timed-out" : "loading"}
-            >
-              {connectionTimedOut ? (
-                <div
-                  className="flex items-center gap-2.5 px-4 py-3 rounded-xl bg-destructive/10 border border-destructive/30 text-destructive text-sm"
-                  data-ocid="new_project.error_state"
-                >
-                  <WifiOff className="w-4 h-4 shrink-0" />
-                  <span className="flex-1">
-                    Connection timed out. The network may be slow.
-                  </span>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    onClick={handleRetryConnection}
-                    className="ml-auto shrink-0 h-7 px-2 text-xs border-destructive/40 text-destructive hover:bg-destructive/10"
-                    data-ocid="new_project.retry.button"
-                  >
-                    <RefreshCw className="w-3 h-3 mr-1" />
-                    Retry
-                  </Button>
-                </div>
-              ) : actorLoading ? (
-                <div
-                  className="flex items-center gap-2.5 px-4 py-3 rounded-xl bg-yellow-500/10 border border-yellow-500/30 text-yellow-600 dark:text-yellow-400 text-sm"
-                  data-ocid="new_project.loading_state"
-                >
-                  <Loader2 className="w-4 h-4 animate-spin shrink-0" />
-                  <span>
-                    Connecting to backend… you can fill the form while this
-                    loads.
-                  </span>
-                </div>
-              ) : (
-                <div
-                  className="flex items-center gap-2.5 px-4 py-3 rounded-xl bg-destructive/10 border border-destructive/30 text-destructive text-sm"
-                  data-ocid="new_project.error_state"
-                >
-                  <WifiOff className="w-4 h-4 shrink-0" />
-                  <span className="flex-1">
-                    Backend connection unavailable.
-                  </span>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    onClick={handleRetryConnection}
-                    className="ml-auto shrink-0 h-7 px-2 text-xs border-destructive/40 text-destructive hover:bg-destructive/10"
-                    data-ocid="new_project.retry.button"
-                  >
-                    <RefreshCw className="w-3 h-3 mr-1" />
-                    Retry
-                  </Button>
-                </div>
-              )}
-            </motion.div>
-          )}
-
           {/* Submit */}
           <div className="flex items-center gap-3 pt-2">
             <Button
@@ -323,15 +218,10 @@ export default function CreateProjectPage({
                   <Loader2 className="mr-2 w-4 h-4 animate-spin" />
                   Creating…
                 </>
-              ) : actorLoading ? (
-                <>
-                  <Loader2 className="mr-2 w-4 h-4 animate-spin" />
-                  Connecting…
-                </>
               ) : (
                 <>
                   <Sparkles className="mr-2 w-4 h-4" />
-                  Create Project
+                  {actorLoading ? "Connecting…" : "Create Project"}
                 </>
               )}
             </Button>

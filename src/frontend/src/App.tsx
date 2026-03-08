@@ -1,10 +1,8 @@
 import { Toaster } from "@/components/ui/sonner";
-import { useQueryClient } from "@tanstack/react-query";
-import { Loader2, WifiOff } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { Loader2 } from "lucide-react";
+import { useEffect, useState } from "react";
 import LoginPage from "./components/LoginPage";
 import Sidebar from "./components/Sidebar";
-import { useActor } from "./hooks/useActor";
 import { useInternetIdentity } from "./hooks/useInternetIdentity";
 import { useSeedData } from "./hooks/useSeedData";
 import CodeEditorPage from "./pages/CodeEditorPage";
@@ -35,14 +33,6 @@ export default function App() {
 
   const [nav, setNav] = useState<NavState>({ page: "dashboard" });
   const [publicSlug] = useState<string | null>(() => getPublicSlug());
-  const queryClient = useQueryClient();
-  const { actor, isFetching: actorLoading } = useActor();
-
-  // Track whether the actor query has had a chance to settle (avoid flash on mount)
-  const actorSettledRef = useRef(false);
-  if (actorLoading) actorSettledRef.current = true; // once it starts fetching, mark settled
-  if (actor) actorSettledRef.current = true; // or once actor is available
-  const actorQueryHasSettled = actorSettledRef.current;
 
   // Seed sample data on first login
   useSeedData(isAuthenticated);
@@ -83,50 +73,6 @@ export default function App() {
           <p className="text-sm text-muted-foreground">Loading…</p>
         </div>
       </div>
-    );
-  }
-
-  // Backend connection failed — show full-page error
-  // Guard against mount flash: only show error after the query has started fetching at least once
-  if (isAuthenticated && !actorLoading && !actor && actorQueryHasSettled) {
-    return (
-      <>
-        <div
-          className="min-h-screen bg-background flex items-center justify-center p-6"
-          data-ocid="app.connection.error_state"
-        >
-          <div className="flex flex-col items-center gap-4 text-center max-w-sm">
-            <div className="w-14 h-14 rounded-2xl bg-destructive/10 border border-destructive/20 flex items-center justify-center">
-              <WifiOff className="w-7 h-7 text-destructive" />
-            </div>
-            <div className="space-y-1.5">
-              <h2 className="font-display text-xl font-bold text-foreground">
-                Connection unavailable
-              </h2>
-              <p className="text-sm text-muted-foreground">
-                Could not connect to the backend network. This may be a
-                temporary issue.
-              </p>
-            </div>
-            <button
-              type="button"
-              onClick={() => {
-                actorSettledRef.current = false;
-                // Use predicate to match ["actor", *] regardless of principal suffix
-                queryClient.refetchQueries({
-                  predicate: (q) => q.queryKey[0] === "actor",
-                });
-              }}
-              className="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors shadow-sm shadow-primary/20"
-              data-ocid="app.connection.retry.button"
-            >
-              <Loader2 className="w-4 h-4" />
-              Retry
-            </button>
-          </div>
-        </div>
-        <Toaster richColors />
-      </>
     );
   }
 

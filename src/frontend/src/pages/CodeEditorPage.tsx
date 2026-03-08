@@ -22,6 +22,7 @@ import {
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   ArrowLeft,
   Bot,
@@ -422,6 +423,7 @@ export default function CodeEditorPage({
   const publishArtifact = usePublishArtifact();
   const unpublishArtifact = useUnpublishArtifact();
   const addRevision = useAddRevision();
+  const queryClient = useQueryClient();
 
   // Editor state
   const [content, setContent] = useState("");
@@ -1096,12 +1098,30 @@ export default function CodeEditorPage({
               </span>
               <button
                 type="button"
-                onClick={() => setRevisionPanelOpen(!revisionPanelOpen)}
-                className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
+                onClick={() => {
+                  const opening = !revisionPanelOpen;
+                  setRevisionPanelOpen(opening);
+                  if (opening) {
+                    queryClient.invalidateQueries({
+                      queryKey: ["revisions", artifactId.toString()],
+                    });
+                  }
+                }}
+                className={cn(
+                  "flex items-center gap-1 text-xs transition-colors",
+                  revisionPanelOpen
+                    ? "text-primary"
+                    : "text-muted-foreground hover:text-foreground",
+                )}
                 data-ocid="editor.revision_panel"
               >
                 <Clock className="w-3.5 h-3.5" />
                 <span className="hidden sm:inline">History</span>
+                {revisions.length > 0 && (
+                  <span className="bg-primary/20 text-primary rounded-full px-1 py-0 text-xs font-mono">
+                    {revisions.length}
+                  </span>
+                )}
                 {revisionPanelOpen ? (
                   <ChevronDown className="w-3 h-3" />
                 ) : (
@@ -1186,14 +1206,19 @@ export default function CodeEditorPage({
       {revisionPanelOpen && (
         <div
           className="border-t border-border bg-card/60 backdrop-blur-sm flex-shrink-0"
-          style={{ height: "220px" }}
+          style={{ height: "260px" }}
         >
           <div className="flex items-center gap-2 px-4 py-2 border-b border-border">
             <Clock className="w-4 h-4 text-primary" />
-            <h3 className="text-sm font-semibold text-foreground">
-              Revision History
-            </h3>
-            <Badge className="text-xs bg-muted text-muted-foreground border-border ml-1">
+            <div className="flex flex-col">
+              <h3 className="text-sm font-semibold text-foreground leading-none">
+                Revision History
+              </h3>
+              <p className="text-xs text-muted-foreground/60 mt-0.5">
+                Each AI edit is saved as a version you can revert to.
+              </p>
+            </div>
+            <Badge className="text-xs bg-muted text-muted-foreground border-border ml-1 self-start mt-0.5">
               {revisions.length}
             </Badge>
             <div className="flex-1" />
@@ -1207,7 +1232,7 @@ export default function CodeEditorPage({
             </button>
           </div>
 
-          <ScrollArea className="h-[calc(220px-41px)]">
+          <ScrollArea className="h-[calc(260px-53px)]">
             <div className="p-3 space-y-2">
               {revisions.length === 0 ? (
                 <div
@@ -1240,7 +1265,7 @@ export default function CodeEditorPage({
                       onClick={() =>
                         handleRevertToRevision(rev.previousContent)
                       }
-                      className="h-6 px-2 text-xs opacity-0 group-hover:opacity-100 transition-opacity gap-1 text-muted-foreground hover:text-foreground"
+                      className="h-6 px-2 text-xs gap-1 text-muted-foreground hover:text-foreground"
                       data-ocid={`editor.revision.${idx + 1}.button`}
                     >
                       <RotateCcw className="w-3 h-3" />

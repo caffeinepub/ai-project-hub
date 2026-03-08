@@ -34,6 +34,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import {
   ArrowLeft,
+  Brain,
   Calendar,
   CheckCircle2,
   Circle,
@@ -42,11 +43,14 @@ import {
   FilePlus2,
   Flag,
   Globe,
+  ImageIcon,
   Loader2,
   Plus,
   Save,
   Target,
   Trash2,
+  Upload,
+  X,
 } from "lucide-react";
 import { motion } from "motion/react";
 import { useEffect, useState } from "react";
@@ -120,12 +124,94 @@ export default function ProjectDetailPage({
   // Track dirty state
   const [isDirty, setIsDirty] = useState(false);
 
+  // AI Training context
+  const [trainingContext, setTrainingContext] = useState("");
+  const [trainingDirty, setTrainingDirty] = useState(false);
+  const [clearTrainingDialogOpen, setClearTrainingDialogOpen] = useState(false);
+
+  useEffect(() => {
+    if (!projectId) return;
+    const stored = localStorage.getItem(`ai-training-${projectId.toString()}`);
+    if (stored) setTrainingContext(stored);
+  }, [projectId]);
+
+  const handleSaveTraining = () => {
+    localStorage.setItem(
+      `ai-training-${projectId.toString()}`,
+      trainingContext,
+    );
+    setTrainingDirty(false);
+    toast.success("AI training saved");
+  };
+
+  const handleClearTraining = () => {
+    localStorage.removeItem(`ai-training-${projectId.toString()}`);
+    setTrainingContext("");
+    setTrainingDirty(false);
+    setClearTrainingDialogOpen(false);
+    toast.success("Training context cleared");
+  };
+
   // New file dialog
   const [newFileDialogOpen, setNewFileDialogOpen] = useState(false);
   const [newFilename, setNewFilename] = useState("");
   const [newFileLanguage, setNewFileLanguage] = useState<Language>(
     Language.HTML,
   );
+
+  // Project images (localStorage)
+  type ProjectImage = { id: string; name: string; dataUrl: string };
+  const [projectImages, setProjectImages] = useState<ProjectImage[]>([]);
+
+  useEffect(() => {
+    if (!projectId) return;
+    try {
+      const stored = localStorage.getItem(
+        `project-images-${projectId.toString()}`,
+      );
+      if (stored) setProjectImages(JSON.parse(stored));
+    } catch {
+      // ignore
+    }
+  }, [projectId]);
+
+  const saveProjectImages = (imgs: ProjectImage[]) => {
+    setProjectImages(imgs);
+    try {
+      localStorage.setItem(
+        `project-images-${projectId.toString()}`,
+        JSON.stringify(imgs),
+      );
+    } catch {
+      // ignore
+    }
+  };
+
+  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files ?? []);
+    if (!files.length) return;
+    const readers = files.map(
+      (file) =>
+        new Promise<ProjectImage>((resolve) => {
+          const reader = new FileReader();
+          reader.onload = () =>
+            resolve({
+              id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+              name: file.name,
+              dataUrl: reader.result as string,
+            });
+          reader.readAsDataURL(file);
+        }),
+    );
+    Promise.all(readers).then((newImgs) => {
+      saveProjectImages([...projectImages, ...newImgs]);
+    });
+    e.target.value = "";
+  };
+
+  const handleDeleteImage = (id: string) => {
+    saveProjectImages(projectImages.filter((img) => img.id !== id));
+  };
 
   useEffect(() => {
     if (project) {
@@ -449,6 +535,32 @@ More content here.`;
                   </span>
                 )}
               </TabsTrigger>
+              <TabsTrigger
+                value="images"
+                className="text-xs data-[state=active]:bg-primary/20 data-[state=active]:text-primary gap-1.5"
+                data-ocid="project_detail.images.tab"
+              >
+                <ImageIcon className="w-3.5 h-3.5" />
+                Images
+                {projectImages.length > 0 && (
+                  <span className="ml-1 text-xs bg-primary/20 text-primary rounded-full px-1.5 py-0">
+                    {projectImages.length}
+                  </span>
+                )}
+              </TabsTrigger>
+              <TabsTrigger
+                value="train"
+                className="text-xs data-[state=active]:bg-primary/20 data-[state=active]:text-primary gap-1.5"
+                data-ocid="project_detail.train_ai.tab"
+              >
+                <Brain className="w-3.5 h-3.5" />
+                Train AI
+                {trainingContext.trim().length > 0 && (
+                  <span className="ml-1 text-xs bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 rounded-full px-1.5 py-0 font-medium">
+                    ✓
+                  </span>
+                )}
+              </TabsTrigger>
             </TabsList>
 
             <TabsContent value="project">
@@ -752,6 +864,308 @@ More content here.`;
               </div>
             </TabsContent>
 
+            {/* Images tab */}
+            <TabsContent value="images">
+              <motion.div
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.2 }}
+              >
+                <div className="flex items-center justify-between mb-4">
+                  <div>
+                    <h3 className="text-sm font-semibold text-foreground">
+                      Project Images
+                    </h3>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      Upload screenshots, mockups, or reference images for this
+                      project.
+                    </p>
+                  </div>
+                  <label
+                    htmlFor="project-image-upload"
+                    className="cursor-pointer"
+                    data-ocid="project_detail.images.upload_button"
+                  >
+                    <div className="flex items-center gap-1.5 h-8 px-3 text-xs bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors font-medium">
+                      <Upload className="w-3.5 h-3.5" />
+                      Upload Images
+                    </div>
+                    <input
+                      id="project-image-upload"
+                      type="file"
+                      accept="image/*"
+                      multiple
+                      className="sr-only"
+                      onChange={handleImageUpload}
+                    />
+                  </label>
+                </div>
+
+                {projectImages.length === 0 ? (
+                  <label
+                    htmlFor="project-image-upload-empty"
+                    className="cursor-pointer block"
+                    data-ocid="project_detail.images.empty_state"
+                  >
+                    <div className="flex flex-col items-center justify-center py-16 text-center border-2 border-dashed border-border rounded-xl bg-card/40 hover:border-primary/40 hover:bg-primary/5 transition-colors">
+                      <ImageIcon className="w-10 h-10 text-muted-foreground/30 mb-3" />
+                      <p className="text-sm text-muted-foreground font-medium mb-1">
+                        No images yet
+                      </p>
+                      <p className="text-xs text-muted-foreground/60 mb-3">
+                        Drop images here or click to upload
+                      </p>
+                      <span className="text-xs text-muted-foreground/50">
+                        PNG, JPG, GIF up to 5MB each
+                      </span>
+                    </div>
+                    <input
+                      id="project-image-upload-empty"
+                      type="file"
+                      accept="image/*"
+                      multiple
+                      className="sr-only"
+                      onChange={handleImageUpload}
+                    />
+                  </label>
+                ) : (
+                  <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+                    {projectImages.map((img) => (
+                      <div
+                        key={img.id}
+                        className="group relative rounded-xl overflow-hidden border border-border bg-card aspect-square"
+                      >
+                        <img
+                          src={img.dataUrl}
+                          alt={img.name}
+                          className="w-full h-full object-cover"
+                        />
+                        <div className="absolute inset-0 bg-black/0 group-hover:bg-black/40 transition-colors" />
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteImage(img.id)}
+                          className="absolute top-1.5 right-1.5 w-6 h-6 rounded-full bg-black/70 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity hover:bg-destructive"
+                          title="Remove image"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                        <div className="absolute bottom-0 left-0 right-0 p-2 bg-gradient-to-t from-black/80 to-transparent opacity-0 group-hover:opacity-100 transition-opacity">
+                          <p className="text-xs text-white truncate font-medium">
+                            {img.name}
+                          </p>
+                        </div>
+                      </div>
+                    ))}
+                    {/* Add more button */}
+                    <label
+                      htmlFor="project-image-upload-add"
+                      className="cursor-pointer flex flex-col items-center justify-center rounded-xl border-2 border-dashed border-border bg-card/40 hover:border-primary/40 hover:bg-primary/5 transition-colors aspect-square"
+                    >
+                      <Plus className="w-6 h-6 text-muted-foreground/50 mb-1" />
+                      <span className="text-xs text-muted-foreground/60">
+                        Add more
+                      </span>
+                      <input
+                        id="project-image-upload-add"
+                        type="file"
+                        accept="image/*"
+                        multiple
+                        className="sr-only"
+                        onChange={handleImageUpload}
+                      />
+                    </label>
+                  </div>
+                )}
+              </motion.div>
+            </TabsContent>
+
+            {/* Train AI tab */}
+            <TabsContent value="train">
+              <motion.div
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.2 }}
+              >
+                <div className="max-w-2xl">
+                  <div className="bg-card border border-border rounded-xl p-6 space-y-4">
+                    {/* Header */}
+                    <div className="flex items-start gap-3">
+                      <div className="w-9 h-9 rounded-lg bg-emerald-500/15 border border-emerald-500/25 flex items-center justify-center flex-shrink-0">
+                        <Brain className="w-4.5 h-4.5 text-emerald-400" />
+                      </div>
+                      <div>
+                        <h3 className="text-sm font-semibold text-foreground leading-tight">
+                          AI Training Context
+                        </h3>
+                        <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed">
+                          Teach the AI about this project. Write anything:
+                          goals, tech stack, coding style, tone, constraints.
+                          The AI will use this every time you chat in the code
+                          editor.
+                        </p>
+                      </div>
+                      {trainingContext.trim().length > 0 && (
+                        <Badge className="flex-shrink-0 text-xs border bg-emerald-500/15 text-emerald-400 border-emerald-500/25 gap-1 ml-auto">
+                          <Brain className="w-3 h-3" />
+                          AI Trained
+                        </Badge>
+                      )}
+                    </div>
+
+                    {/* Textarea */}
+                    <div className="space-y-1.5">
+                      <Textarea
+                        value={trainingContext}
+                        onChange={(e) => {
+                          const val = e.target.value.slice(0, 10000);
+                          setTrainingContext(val);
+                          setTrainingDirty(true);
+                        }}
+                        placeholder={
+                          "Example:\n- This is a dark-themed HTML landing page for a meditation app\n- Use CSS custom properties for colors\n- Keep the design minimal and calming\n- Font: system-ui, prefer lowercase headings\n- Always add smooth CSS transitions to interactive elements"
+                        }
+                        rows={12}
+                        className="bg-background border-border text-sm resize-none font-mono leading-relaxed"
+                        data-ocid="project_detail.train_ai.textarea"
+                      />
+                      <div className="flex items-center justify-between">
+                        <p
+                          className={cn(
+                            "text-xs font-mono",
+                            trainingContext.length > 9000
+                              ? "text-orange-400"
+                              : "text-muted-foreground/60",
+                          )}
+                        >
+                          {trainingContext.length.toLocaleString()} / 10,000
+                          characters
+                        </p>
+                        {trainingDirty && (
+                          <span className="text-xs text-orange-400 font-mono">
+                            ● Unsaved
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Action buttons */}
+                    <div className="flex items-center gap-2 pt-1">
+                      <Button
+                        onClick={handleSaveTraining}
+                        disabled={
+                          !trainingDirty && trainingContext.length === 0
+                        }
+                        className="h-9 text-sm bg-emerald-600 hover:bg-emerald-700 text-white gap-1.5"
+                        data-ocid="project_detail.train_ai.save_button"
+                      >
+                        <Save className="w-3.5 h-3.5" />
+                        Save Training
+                      </Button>
+
+                      {trainingContext.trim().length > 0 && (
+                        <Button
+                          variant="ghost"
+                          onClick={() => setClearTrainingDialogOpen(true)}
+                          className="h-9 text-sm text-destructive hover:bg-destructive/10 hover:text-destructive gap-1.5"
+                          data-ocid="project_detail.train_ai.delete_button"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                          Clear
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Tips card */}
+                  <div className="mt-4 bg-card/50 border border-border/60 rounded-xl p-4">
+                    <h4 className="text-xs font-semibold text-foreground/80 mb-2">
+                      What to write
+                    </h4>
+                    <ul className="space-y-1.5 text-xs text-muted-foreground">
+                      <li className="flex items-start gap-2">
+                        <span className="text-emerald-400 mt-0.5">•</span>
+                        <span>
+                          <strong className="text-foreground/70">
+                            Purpose
+                          </strong>{" "}
+                          — what this project is and who it's for
+                        </span>
+                      </li>
+                      <li className="flex items-start gap-2">
+                        <span className="text-emerald-400 mt-0.5">•</span>
+                        <span>
+                          <strong className="text-foreground/70">
+                            Tech stack
+                          </strong>{" "}
+                          — HTML, CSS frameworks, libraries, APIs
+                        </span>
+                      </li>
+                      <li className="flex items-start gap-2">
+                        <span className="text-emerald-400 mt-0.5">•</span>
+                        <span>
+                          <strong className="text-foreground/70">
+                            Style rules
+                          </strong>{" "}
+                          — color palette, fonts, spacing preferences
+                        </span>
+                      </li>
+                      <li className="flex items-start gap-2">
+                        <span className="text-emerald-400 mt-0.5">•</span>
+                        <span>
+                          <strong className="text-foreground/70">Tone</strong> —
+                          formal, playful, minimal, feature-rich
+                        </span>
+                      </li>
+                      <li className="flex items-start gap-2">
+                        <span className="text-emerald-400 mt-0.5">•</span>
+                        <span>
+                          <strong className="text-foreground/70">
+                            Constraints
+                          </strong>{" "}
+                          — no external CDNs, mobile-first, accessibility
+                          requirements
+                        </span>
+                      </li>
+                    </ul>
+                  </div>
+                </div>
+              </motion.div>
+
+              {/* Clear training AlertDialog */}
+              <AlertDialog
+                open={clearTrainingDialogOpen}
+                onOpenChange={setClearTrainingDialogOpen}
+              >
+                <AlertDialogContent
+                  className="bg-card border-border"
+                  data-ocid="project_detail.train_ai.clear_dialog"
+                >
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>
+                      Clear AI training context?
+                    </AlertDialogTitle>
+                    <AlertDialogDescription>
+                      This will permanently remove the training instructions for
+                      this project. The AI will no longer have project-specific
+                      context when you chat in the editor.
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel data-ocid="project_detail.train_ai.clear_cancel_button">
+                      Cancel
+                    </AlertDialogCancel>
+                    <AlertDialogAction
+                      onClick={handleClearTraining}
+                      className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                      data-ocid="project_detail.train_ai.clear_confirm_button"
+                    >
+                      Clear Training
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
+            </TabsContent>
+
             {/* Code Files tab */}
             <TabsContent value="files">
               <motion.div
@@ -813,12 +1227,13 @@ More content here.`;
                     {artifacts.map((artifact, idx) => (
                       <div
                         key={artifact.id.toString()}
-                        className="flex items-center gap-3 p-3.5 bg-card border border-border rounded-xl group hover:border-primary/30 transition-colors"
+                        className="flex flex-col gap-2 p-3.5 bg-card border border-border rounded-xl group hover:border-primary/30 transition-colors overflow-hidden"
                         data-ocid={`artifacts.item.${idx + 1}`}
                       >
-                        <div className="flex-1 min-w-0 flex items-center gap-3">
+                        {/* Top row: icon + filename + badges */}
+                        <div className="flex items-center gap-3 min-w-0">
                           <Code2 className="w-4 h-4 text-muted-foreground flex-shrink-0" />
-                          <div className="min-w-0">
+                          <div className="min-w-0 flex-1">
                             <p className="text-sm font-mono font-medium text-foreground truncate">
                               {artifact.filename}
                             </p>
@@ -858,13 +1273,14 @@ More content here.`;
                           )}
                         </div>
 
-                        <div className="flex items-center gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                        {/* Bottom row: Open Editor + delete */}
+                        <div className="flex items-center gap-1.5">
                           <Button
                             size="sm"
                             onClick={() =>
                               onNavigate("editor", project.id, artifact.id)
                             }
-                            className="h-7 text-xs bg-primary/20 text-primary hover:bg-primary/30 border border-primary/30"
+                            className="h-7 px-3 text-xs bg-primary/20 text-primary hover:bg-primary/30 border border-primary/30 whitespace-nowrap shrink-0"
                             data-ocid={`artifacts.open_editor_button.${idx + 1}`}
                           >
                             Open Editor

@@ -25,6 +25,7 @@ import { cn } from "@/lib/utils";
 import {
   ArrowLeft,
   Bot,
+  Brain,
   Check,
   ChevronDown,
   ChevronUp,
@@ -32,14 +33,17 @@ import {
   Copy,
   ExternalLink,
   Globe,
+  ImageIcon,
   Loader2,
   Maximize2,
   Minimize2,
+  Plus,
   RotateCcw,
   Save,
   Send,
   Sparkles,
   Trash2,
+  Upload,
   WifiOff,
   X,
 } from "lucide-react";
@@ -263,7 +267,12 @@ async function callFreeAI(
   currentContent: string,
   language: string,
   instruction: string,
+  trainingContext?: string,
 ): Promise<string> {
+  const systemPrompt = trainingContext
+    ? `You are a code editor assistant. The user has provided the following project training context:\n\n${trainingContext}\n\n---\n\nUse this context to inform all code changes. Return ONLY the complete modified code with no explanation, no markdown code fences, no commentary. Just output the raw code.`
+    : "You are a code editor assistant. The user will provide code and an instruction. Return ONLY the complete modified code with no explanation, no markdown code fences, no commentary. Just output the raw code.";
+
   const response = await fetch("https://text.pollinations.ai/", {
     method: "POST",
     headers: {
@@ -274,8 +283,7 @@ async function callFreeAI(
       messages: [
         {
           role: "system",
-          content:
-            "You are a code editor assistant. The user will provide code and an instruction. Return ONLY the complete modified code with no explanation, no markdown code fences, no commentary. Just output the raw code.",
+          content: systemPrompt,
         },
         {
           role: "user",
@@ -431,6 +439,69 @@ export default function CodeEditorPage({
 
   // Revision history panel
   const [revisionPanelOpen, setRevisionPanelOpen] = useState(false);
+
+  // Reference images panel
+  type RefImage = { id: string; name: string; dataUrl: string };
+  const [refImages, setRefImages] = useState<RefImage[]>([]);
+  const [refsPanelOpen, setRefsPanelOpen] = useState(false);
+
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem(
+        `editor-refs-${artifactId.toString()}`,
+      );
+      if (stored) setRefImages(JSON.parse(stored));
+    } catch {
+      // ignore
+    }
+  }, [artifactId]);
+
+  const saveRefImages = (imgs: RefImage[]) => {
+    setRefImages(imgs);
+    try {
+      localStorage.setItem(
+        `editor-refs-${artifactId.toString()}`,
+        JSON.stringify(imgs),
+      );
+    } catch {
+      // ignore
+    }
+  };
+
+  const handleRefImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files ?? []);
+    if (!files.length) return;
+    const readers = files.map(
+      (file) =>
+        new Promise<RefImage>((resolve) => {
+          const reader = new FileReader();
+          reader.onload = () =>
+            resolve({
+              id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+              name: file.name,
+              dataUrl: reader.result as string,
+            });
+          reader.readAsDataURL(file);
+        }),
+    );
+    Promise.all(readers).then((newImgs) => {
+      saveRefImages([...refImages, ...newImgs]);
+      setRefsPanelOpen(true);
+    });
+    e.target.value = "";
+  };
+
+  const handleDeleteRefImage = (id: string) => {
+    saveRefImages(refImages.filter((img) => img.id !== id));
+  };
+
+  // AI training context (loaded from localStorage)
+  const [trainingContext, setTrainingContext] = useState("");
+
+  useEffect(() => {
+    const stored = localStorage.getItem(`ai-training-${projectId.toString()}`);
+    if (stored) setTrainingContext(stored);
+  }, [projectId]);
 
   // AI chat state
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
@@ -600,7 +671,12 @@ export default function CodeEditorPage({
     let errorText: string | null = null;
 
     try {
-      newContent = await callFreeAI(content, language, instruction);
+      newContent = await callFreeAI(
+        content,
+        language,
+        instruction,
+        trainingContext || undefined,
+      );
       successText = "Done! Applied your changes.";
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : "Unknown AI error";
@@ -647,7 +723,15 @@ export default function CodeEditorPage({
     );
 
     setIsAiWorking(false);
-  }, [artifact, chatInput, content, isAiWorking, language, addRevision]);
+  }, [
+    artifact,
+    chatInput,
+    content,
+    isAiWorking,
+    language,
+    addRevision,
+    trainingContext,
+  ]);
 
   const handleChatKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -850,7 +934,7 @@ export default function CodeEditorPage({
 
         {/* Publish controls */}
         {artifact.isPublished ? (
-          <div className="flex items-center gap-1.5">
+          <div className="flex items-center gap-1.5 flex-shrink-0">
             {publicUrl && (
               <a
                 href={publicUrl}
@@ -868,7 +952,7 @@ export default function CodeEditorPage({
               size="sm"
               variant="ghost"
               onClick={handleCopyLink}
-              className="h-7 text-xs gap-1"
+              className="h-7 text-xs gap-1 flex-shrink-0 whitespace-nowrap"
               data-ocid="editor.copy_link_button"
             >
               {copied ? (
@@ -885,7 +969,7 @@ export default function CodeEditorPage({
               variant="outline"
               onClick={handleUnpublish}
               disabled={unpublishArtifact.isPending}
-              className="h-7 text-xs border-border gap-1"
+              className="h-7 text-xs border-border gap-1 flex-shrink-0 whitespace-nowrap"
               data-ocid="editor.unpublish_button"
             >
               <WifiOff className="w-3.5 h-3.5" />
@@ -897,7 +981,7 @@ export default function CodeEditorPage({
             size="sm"
             onClick={handlePublish}
             disabled={publishArtifact.isPending}
-            className="h-7 text-xs bg-emerald-600 hover:bg-emerald-700 text-white gap-1"
+            className="h-7 text-xs bg-emerald-600 hover:bg-emerald-700 text-white gap-1 flex-shrink-0 whitespace-nowrap"
             data-ocid="editor.publish_button"
           >
             {publishArtifact.isPending ? (
@@ -914,7 +998,7 @@ export default function CodeEditorPage({
           onClick={handleSave}
           disabled={!isDirty || updateArtifact.isPending}
           className={cn(
-            "h-7 text-xs gap-1",
+            "h-7 text-xs gap-1 flex-shrink-0 whitespace-nowrap",
             isDirty
               ? "bg-primary text-primary-foreground hover:bg-primary/90"
               : "bg-card border border-border text-muted-foreground",
@@ -935,7 +1019,7 @@ export default function CodeEditorPage({
             <Button
               size="sm"
               variant="ghost"
-              className="h-7 text-xs text-destructive hover:bg-destructive/10"
+              className="h-7 text-xs text-destructive hover:bg-destructive/10 flex-shrink-0"
               data-ocid="editor.delete_button"
             >
               <Trash2 className="w-3.5 h-3.5" />
@@ -1022,6 +1106,25 @@ export default function CodeEditorPage({
                   <ChevronDown className="w-3 h-3" />
                 ) : (
                   <ChevronUp className="w-3 h-3" />
+                )}
+              </button>
+              <button
+                type="button"
+                onClick={() => setRefsPanelOpen(!refsPanelOpen)}
+                className={cn(
+                  "flex items-center gap-1 text-xs transition-colors",
+                  refsPanelOpen
+                    ? "text-primary"
+                    : "text-muted-foreground hover:text-foreground",
+                )}
+                data-ocid="editor.refs.toggle"
+              >
+                <ImageIcon className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">Refs</span>
+                {refImages.length > 0 && (
+                  <span className="bg-primary/20 text-primary rounded-full px-1 py-0 text-xs font-mono">
+                    {refImages.length}
+                  </span>
                 )}
               </button>
             </div>
@@ -1151,6 +1254,127 @@ export default function CodeEditorPage({
         </div>
       )}
 
+      {/* ── Reference Images Panel (collapsible) ─────────────── */}
+      {refsPanelOpen && (
+        <div
+          className="border-t border-border bg-card/60 backdrop-blur-sm flex-shrink-0"
+          style={{ height: "200px" }}
+          data-ocid="editor.refs.panel"
+        >
+          <div className="flex items-center gap-2 px-4 py-2 border-b border-border">
+            <ImageIcon className="w-4 h-4 text-primary" />
+            <h3 className="text-sm font-semibold text-foreground">
+              Reference Images
+            </h3>
+            <span className="text-xs bg-muted text-muted-foreground border border-border rounded-full px-1.5 py-0 font-mono ml-1">
+              {refImages.length}
+            </span>
+            <div className="flex-1" />
+            <label
+              htmlFor="editor-refs-upload"
+              className="cursor-pointer flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
+              data-ocid="editor.refs.upload_button"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              <span>Add Image</span>
+              <input
+                id="editor-refs-upload"
+                type="file"
+                accept="image/*"
+                multiple
+                className="sr-only"
+                onChange={handleRefImageUpload}
+              />
+            </label>
+            <button
+              type="button"
+              onClick={() => setRefsPanelOpen(false)}
+              className="text-muted-foreground hover:text-foreground transition-colors text-xs flex items-center gap-1 ml-2"
+            >
+              <X className="w-3.5 h-3.5" />
+              Close
+            </button>
+          </div>
+
+          <div className="h-[calc(200px-41px)] overflow-x-auto overflow-y-hidden">
+            {refImages.length === 0 ? (
+              <label
+                htmlFor="editor-refs-upload-empty"
+                className="cursor-pointer flex flex-col items-center justify-center h-full gap-2 text-center px-4"
+              >
+                <Upload className="w-6 h-6 text-muted-foreground/30" />
+                <p className="text-xs text-muted-foreground/60">
+                  Add reference images for coding context
+                </p>
+                <p className="text-xs text-muted-foreground/40">
+                  PNG, JPG, GIF up to 5MB each
+                </p>
+                <input
+                  id="editor-refs-upload-empty"
+                  type="file"
+                  accept="image/*"
+                  multiple
+                  className="sr-only"
+                  onChange={handleRefImageUpload}
+                />
+              </label>
+            ) : (
+              <div className="flex gap-2 p-2 h-full items-center">
+                {refImages.map((img) => (
+                  <div
+                    key={img.id}
+                    className="relative flex-shrink-0 h-full group"
+                    style={{ width: "140px" }}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => window.open(img.dataUrl, "_blank")}
+                      className="block w-full h-full rounded-lg overflow-hidden border border-border hover:border-primary/50 transition-colors"
+                      title={`Open ${img.name}`}
+                    >
+                      <img
+                        src={img.dataUrl}
+                        alt={img.name}
+                        className="w-full h-full object-cover"
+                      />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleDeleteRefImage(img.id)}
+                      className="absolute top-1 right-1 w-5 h-5 rounded-full bg-black/70 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity hover:bg-destructive z-10"
+                      title="Remove"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                    <div className="absolute bottom-0 left-0 right-0 p-1 bg-gradient-to-t from-black/70 to-transparent opacity-0 group-hover:opacity-100 transition-opacity rounded-b-lg">
+                      <p className="text-xs text-white truncate">{img.name}</p>
+                    </div>
+                  </div>
+                ))}
+                <label
+                  htmlFor="editor-refs-upload-add"
+                  className="flex-shrink-0 flex flex-col items-center justify-center rounded-lg border-2 border-dashed border-border hover:border-primary/40 transition-colors cursor-pointer"
+                  style={{ width: "80px", height: "100%" }}
+                >
+                  <Plus className="w-5 h-5 text-muted-foreground/50" />
+                  <span className="text-xs text-muted-foreground/60 mt-1">
+                    Add
+                  </span>
+                  <input
+                    id="editor-refs-upload-add"
+                    type="file"
+                    accept="image/*"
+                    multiple
+                    className="sr-only"
+                    onChange={handleRefImageUpload}
+                  />
+                </label>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* ── AI Chat Panel (always visible) ───────────────────── */}
       <div
         className="flex-shrink-0 border-t border-border bg-card/80 backdrop-blur-sm"
@@ -1168,9 +1392,19 @@ export default function CodeEditorPage({
             </span>
           </div>
 
-          <Badge className="text-xs border ml-0.5 font-mono bg-primary/10 text-primary border-primary/20">
-            AI Ready
-          </Badge>
+          {trainingContext.trim().length > 0 ? (
+            <Badge
+              className="text-xs border ml-0.5 font-mono bg-emerald-500/15 text-emerald-400 border-emerald-500/25 gap-1"
+              data-ocid="editor.ai_trained.badge"
+            >
+              <Brain className="w-3 h-3" />
+              Trained
+            </Badge>
+          ) : (
+            <Badge className="text-xs border ml-0.5 font-mono bg-primary/10 text-primary border-primary/20">
+              AI Ready
+            </Badge>
+          )}
 
           <div className="flex-1" />
 

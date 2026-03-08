@@ -10,6 +10,10 @@ export type CategoryKind =
   | "VideoGame"
   | "TherapyCompanionBot"
   | "CustomAIAssistant"
+  | "SubliminalMaker"
+  | "SongMaker"
+  | "VideoAnimationMaker"
+  | "ImageGenerator"
   | "Other";
 
 export function getCategoryKind(cat: Category): CategoryKind {
@@ -30,8 +34,23 @@ export function getCategoryLabel(cat: Category): string {
       return "Therapy Bot";
     case "CustomAIAssistant":
       return "AI Assistant";
-    case "Other":
-      return (cat as { __kind__: "Other"; Other: string }).Other || "Other";
+    case "Other": {
+      const other =
+        (cat as { __kind__: "Other"; Other: string }).Other || "Other";
+      // Map back to friendly labels for our preset Other variants
+      switch (other) {
+        case "Subliminal Maker":
+          return "Subliminal Maker";
+        case "Song Maker":
+          return "Song Maker";
+        case "Video / Animation Maker":
+          return "Video / Animation Maker";
+        case "Image Generator":
+          return "Image Generator";
+        default:
+          return other;
+      }
+    }
     default:
       return "Unknown";
   }
@@ -80,6 +99,30 @@ export const CATEGORY_OPTIONS: {
     color: "text-cyan-400 bg-cyan-400/10",
   },
   {
+    value: "SubliminalMaker",
+    label: "Subliminal Maker",
+    icon: "🎧",
+    color: "text-violet-400 bg-violet-400/10",
+  },
+  {
+    value: "SongMaker",
+    label: "Song Maker",
+    icon: "🎵",
+    color: "text-rose-400 bg-rose-400/10",
+  },
+  {
+    value: "VideoAnimationMaker",
+    label: "Video / Animation Maker",
+    icon: "🎬",
+    color: "text-orange-400 bg-orange-400/10",
+  },
+  {
+    value: "ImageGenerator",
+    label: "Image Generator",
+    icon: "🖼️",
+    color: "text-teal-400 bg-teal-400/10",
+  },
+  {
     value: "Other",
     label: "Other",
     icon: "✨",
@@ -87,13 +130,32 @@ export const CATEGORY_OPTIONS: {
   },
 ];
 
+function resolveOtherKind(cat: Category): string {
+  if (cat.__kind__ !== "Other") return cat.__kind__;
+  const otherVal = (cat as { __kind__: "Other"; Other: string }).Other;
+  switch (otherVal) {
+    case "Subliminal Maker":
+      return "SubliminalMaker";
+    case "Song Maker":
+      return "SongMaker";
+    case "Video / Animation Maker":
+      return "VideoAnimationMaker";
+    case "Image Generator":
+      return "ImageGenerator";
+    default:
+      return "Other";
+  }
+}
+
 export function getCategoryColor(cat: Category): string {
-  const opt = CATEGORY_OPTIONS.find((o) => o.value === cat.__kind__);
+  const key = resolveOtherKind(cat);
+  const opt = CATEGORY_OPTIONS.find((o) => o.value === key);
   return opt?.color ?? "text-muted-foreground bg-muted";
 }
 
 export function getCategoryIcon(cat: Category): string {
-  const opt = CATEGORY_OPTIONS.find((o) => o.value === cat.__kind__);
+  const key = resolveOtherKind(cat);
+  const opt = CATEGORY_OPTIONS.find((o) => o.value === key);
   return opt?.icon ?? "✨";
 }
 
@@ -101,10 +163,23 @@ export function makeCategoryFromKind(
   kind: CategoryKind,
   other?: string,
 ): Category {
-  if (kind === "Other") {
-    return { __kind__: "Other", Other: other ?? "Other" } as Category;
+  switch (kind) {
+    case "Other":
+      return { __kind__: "Other", Other: other ?? "Other" } as Category;
+    case "SubliminalMaker":
+      return { __kind__: "Other", Other: "Subliminal Maker" } as Category;
+    case "SongMaker":
+      return { __kind__: "Other", Other: "Song Maker" } as Category;
+    case "VideoAnimationMaker":
+      return {
+        __kind__: "Other",
+        Other: "Video / Animation Maker",
+      } as Category;
+    case "ImageGenerator":
+      return { __kind__: "Other", Other: "Image Generator" } as Category;
+    default:
+      return { __kind__: kind, [kind]: null } as unknown as Category;
   }
-  return { __kind__: kind, [kind]: null } as unknown as Category;
 }
 
 // ── Status helpers ────────────────────────────────────────────

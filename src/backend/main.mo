@@ -5,7 +5,6 @@ import Time "mo:core/Time";
 import List "mo:core/List";
 import Runtime "mo:core/Runtime";
 import Principal "mo:core/Principal";
-
 import MixinAuthorization "authorization/MixinAuthorization";
 import AccessControl "authorization/access-control";
 
@@ -797,5 +796,3 @@ actor {
     };
   };
 };
-
-

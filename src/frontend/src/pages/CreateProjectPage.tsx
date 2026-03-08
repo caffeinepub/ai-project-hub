@@ -3,11 +3,18 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
-import { ArrowLeft, Loader2, Sparkles } from "lucide-react";
-import { motion } from "motion/react";
-import { useState } from "react";
+import {
+  AlertTriangle,
+  ArrowLeft,
+  Loader2,
+  RefreshCw,
+  Sparkles,
+} from "lucide-react";
+import { AnimatePresence, motion } from "motion/react";
+import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useActor } from "../hooks/useActor";
+import { useActorStatus } from "../hooks/useActorStatus";
 import { useCreateProject } from "../hooks/useQueries";
 import { CATEGORY_OPTIONS, makeCategoryFromKind } from "../lib/projectUtils";
 import type { CategoryKind } from "../lib/projectUtils";
@@ -18,6 +25,8 @@ interface CreateProjectPageProps {
   onNavigate: (page: Page, id?: bigint) => void;
 }
 
+const SLOW_CONNECTION_TIMEOUT_MS = 15_000;
+
 export default function CreateProjectPage({
   onNavigate,
 }: CreateProjectPageProps) {
@@ -25,9 +34,35 @@ export default function CreateProjectPage({
   const [categoryKind, setCategoryKind] = useState<CategoryKind | "">("");
   const [otherLabel, setOtherLabel] = useState("");
   const [description, setDescription] = useState("");
+  const [showSlowWarning, setShowSlowWarning] = useState(false);
+
   const createProject = useCreateProject();
   const { actor, isFetching: actorLoading } = useActor();
+  const { isError: actorError, retry: retryActor } = useActorStatus();
+
   const isReady = !!actor && !actorLoading;
+
+  // Start a timer; if actor isn't ready after SLOW_CONNECTION_TIMEOUT_MS, surface a warning
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    if (isReady || actorError) {
+      setShowSlowWarning(false);
+      if (timerRef.current) clearTimeout(timerRef.current);
+      return;
+    }
+    timerRef.current = setTimeout(() => {
+      if (!isReady) setShowSlowWarning(true);
+    }, SLOW_CONNECTION_TIMEOUT_MS);
+    return () => {
+      if (timerRef.current) clearTimeout(timerRef.current);
+    };
+  }, [isReady, actorError]);
+
+  const handleRetry = () => {
+    setShowSlowWarning(false);
+    retryActor();
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -66,6 +101,8 @@ export default function CreateProjectPage({
     }
   };
 
+  const showConnectionBanner = actorError || showSlowWarning;
+
   return (
     <div className="flex-1 overflow-auto scrollbar-thin">
       <div className="max-w-2xl mx-auto px-6 py-8">
@@ -79,6 +116,7 @@ export default function CreateProjectPage({
             type="button"
             onClick={() => onNavigate("projects")}
             className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors mb-4"
+            data-ocid="new_project.cancel.link"
           >
             <ArrowLeft className="w-4 h-4" />
             Back to Projects
@@ -97,6 +135,48 @@ export default function CreateProjectPage({
             </div>
           </div>
         </motion.div>
+
+        {/* Connection warning banner */}
+        <AnimatePresence>
+          {showConnectionBanner && (
+            <motion.div
+              key="connection-warning"
+              initial={{ opacity: 0, y: -8, height: 0 }}
+              animate={{ opacity: 1, y: 0, height: "auto" }}
+              exit={{ opacity: 0, y: -8, height: 0 }}
+              transition={{ duration: 0.2 }}
+              className="overflow-hidden mb-6"
+              data-ocid="new_project.error_state"
+            >
+              <div className="flex items-start gap-3 p-4 rounded-xl border border-warning/40 bg-warning/10 text-sm">
+                <AlertTriangle className="w-4 h-4 text-warning mt-0.5 shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <p className="font-medium text-foreground">
+                    {actorError
+                      ? "Backend connection failed"
+                      : "Slow connection detected"}
+                  </p>
+                  <p className="text-muted-foreground mt-0.5">
+                    {actorError
+                      ? "Could not reach the network. Try again or check your connection."
+                      : "The network is taking longer than usual to respond."}
+                  </p>
+                </div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={handleRetry}
+                  className="shrink-0 border-warning/40 hover:bg-warning/10 gap-1.5"
+                  data-ocid="new_project.retry.button"
+                >
+                  <RefreshCw className="w-3.5 h-3.5" />
+                  Retry
+                </Button>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
 
         {/* Form */}
         <motion.form
@@ -220,8 +300,12 @@ export default function CreateProjectPage({
                 </>
               ) : (
                 <>
-                  <Sparkles className="mr-2 w-4 h-4" />
-                  {actorLoading ? "Connecting…" : "Create Project"}
+                  {actorLoading && !isReady ? (
+                    <Loader2 className="mr-2 w-4 h-4 animate-spin" />
+                  ) : (
+                    <Sparkles className="mr-2 w-4 h-4" />
+                  )}
+                  {actorLoading && !isReady ? "Connecting…" : "Create Project"}
                 </>
               )}
             </Button>

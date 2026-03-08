@@ -61,6 +61,9 @@
     --destructive: 0.62 0.22 25;
     --destructive-foreground: 0.98 0 0;
 
+    /* Warning: amber */
+    --warning: 0.78 0.18 75;
+
     /* Border / input */
     --border: 0.28 0.022 258;
     --input: 0.22 0.02 258;

@@ -1,20 +1,22 @@
 # AI Project Hub
 
 ## Current State
-Full-stack app with Motoko backend and React frontend. The backend has an authorization mixin that exposes `_initializeAccessControlWithSecret`, but this method is missing from `backend.d.ts`. The `useActor.ts` hook calls this method at runtime, causing a "not a function" error that silently kills actor initialization and leaves the app permanently unable to connect to the backend.
+The app has a full project management system with backend actor initialization via `useActor.ts`. The actor creation calls `_initializeAccessControlWithSecret` during setup, which can throw and silently fail, leaving `actor` null and blocking project creation. The Create Project button becomes permanently disabled because `isReady` never becomes true.
 
 ## Requested Changes (Diff)
 
 ### Add
-- Nothing new
+- Error boundary around `_initializeAccessControlWithSecret` so a failure doesn't prevent the actor from being returned
 
 ### Modify
-- Regenerate backend (main.mo unchanged in behavior) so that the build pipeline produces a correct `backend.d.ts` that includes `_initializeAccessControlWithSecret` from the authorization mixin
+- `useActor.ts`: Wrap `_initializeAccessControlWithSecret` in a try/catch so the actor is still returned even if that call fails
+- `useActor.ts`: Add `retry: 2` and `retryDelay: 1000` to the query config to handle transient network issues on first load
+- `CreateProjectPage.tsx`: Show a more helpful inline error if `actorLoading` is stuck after a timeout, with a manual retry button
 
 ### Remove
 - Nothing
 
 ## Implementation Plan
-1. Regenerate Motoko backend with identical functionality to produce a fresh `backend.d.ts` that exposes all authorization mixin methods including `_initializeAccessControlWithSecret`
-2. Validate frontend build
-3. Deploy
+1. Fix `useActor.ts` to not fail actor creation if `_initializeAccessControlWithSecret` throws
+2. Add retry logic to the actor query
+3. Add a visible connection status indicator on the Create Project page with a working retry

@@ -4,6 +4,7 @@ import {
   Brain,
   FolderOpen,
   LayoutDashboard,
+  Loader2,
   LogOut,
   Menu,
   PlusCircle,
@@ -11,6 +12,7 @@ import {
 } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { useState } from "react";
+import { useActor } from "../hooks/useActor";
 import { useInternetIdentity } from "../hooks/useInternetIdentity";
 
 type Page = "dashboard" | "projects" | "new" | "detail" | "editor";
@@ -37,6 +39,7 @@ const NAV_ITEMS = [
 
 export default function Sidebar({ currentPage, onNavigate }: SidebarProps) {
   const { clear, identity } = useInternetIdentity();
+  const { isFetching: actorLoading } = useActor();
   const [mobileOpen, setMobileOpen] = useState(false);
 
   const principalShort = identity
@@ -111,6 +114,24 @@ export default function Sidebar({ currentPage, onNavigate }: SidebarProps) {
           </button>
         </div>
       </nav>
+
+      {/* Connection status indicator */}
+      <AnimatePresence>
+        {actorLoading && (
+          <motion.div
+            className="px-3 pb-1"
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: "auto" }}
+            exit={{ opacity: 0, height: 0 }}
+            transition={{ duration: 0.2 }}
+          >
+            <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-yellow-500/10 border border-yellow-500/20 text-yellow-500 text-[11px] font-medium">
+              <Loader2 className="w-3 h-3 animate-spin flex-shrink-0" />
+              Connecting to network…
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* User section */}
       <div className="border-t border-sidebar-border px-3 py-4">

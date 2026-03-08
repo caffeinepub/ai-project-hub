@@ -19,6 +19,7 @@ import { motion } from "motion/react";
 import { useState } from "react";
 import type { Status } from "../backend.d";
 import ProjectCard from "../components/ProjectCard";
+import { useActor } from "../hooks/useActor";
 import { useGetProjects } from "../hooks/useQueries";
 import { CATEGORY_OPTIONS, STATUS_OPTIONS } from "../lib/projectUtils";
 import type { CategoryKind } from "../lib/projectUtils";
@@ -30,6 +31,7 @@ interface ProjectsPageProps {
 }
 
 export default function ProjectsPage({ onNavigate }: ProjectsPageProps) {
+  const { isFetching: actorLoading } = useActor();
   const { data: projects = [], isLoading } = useGetProjects();
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
   const [search, setSearch] = useState("");
@@ -146,7 +148,7 @@ export default function ProjectsPage({ onNavigate }: ProjectsPageProps) {
         </motion.div>
 
         {/* Content */}
-        {isLoading ? (
+        {isLoading || actorLoading ? (
           <div
             className={
               viewMode === "grid"

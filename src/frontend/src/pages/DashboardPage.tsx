@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import { motion } from "motion/react";
 import { Status } from "../backend.d";
+import { useActor } from "../hooks/useActor";
 import { useGetProjects } from "../hooks/useQueries";
 import {
   formatRelativeDate,
@@ -30,6 +31,7 @@ interface DashboardPageProps {
 }
 
 export default function DashboardPage({ onNavigate }: DashboardPageProps) {
+  const { isFetching: actorLoading } = useActor();
   const { data: projects = [], isLoading } = useGetProjects();
 
   const stats = {
@@ -102,7 +104,7 @@ export default function DashboardPage({ onNavigate }: DashboardPageProps) {
         </motion.div>
 
         {/* Stats grid */}
-        {isLoading ? (
+        {isLoading || actorLoading ? (
           <div
             className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 mb-8"
             data-ocid="dashboard.loading_state"
@@ -207,7 +209,7 @@ export default function DashboardPage({ onNavigate }: DashboardPageProps) {
               </Button>
             </div>
 
-            {isLoading ? (
+            {isLoading || actorLoading ? (
               <div className="space-y-2">
                 {["r1", "r2", "r3"].map((sk) => (
                   <Skeleton key={sk} className="h-16 rounded-lg bg-card" />

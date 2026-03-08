@@ -11,7 +11,7 @@ import AccessControl "authorization/access-control";
 
 // <CANDID_SETTINGS blobConversion="0">
 
- actor {
+actor {
   let accessControlState = AccessControl.initState();
   include MixinAuthorization(accessControlState);
 
@@ -797,4 +797,5 @@ import AccessControl "authorization/access-control";
     };
   };
 };
+
 

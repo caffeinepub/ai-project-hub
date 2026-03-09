@@ -27,6 +27,8 @@ export function useGetProjects() {
       return actor.getProjects();
     },
     enabled: !!actor && !isFetching,
+    retry: 2,
+    retryDelay: 1000,
   });
 }
 
@@ -39,6 +41,8 @@ export function useGetProject(id: bigint) {
       return actor.getProject(id);
     },
     enabled: !!actor && !isFetching,
+    retry: 2,
+    retryDelay: 1000,
   });
 }
 
@@ -299,6 +303,8 @@ export function useGetArtifacts(projectId: bigint) {
       return actor.getArtifacts(projectId);
     },
     enabled: !!actor && !isFetching,
+    retry: 2,
+    retryDelay: 1000,
   });
 }
 
@@ -311,6 +317,8 @@ export function useGetArtifact(id: bigint) {
       return actor.getArtifact(id);
     },
     enabled: !!actor && !isFetching,
+    retry: 2,
+    retryDelay: 1000,
   });
 }
 
@@ -323,6 +331,8 @@ export function useGetRevisions(artifactId: bigint) {
       return actor.getRevisions(artifactId);
     },
     enabled: !!actor && !isFetching,
+    retry: 2,
+    retryDelay: 1000,
   });
 }
 

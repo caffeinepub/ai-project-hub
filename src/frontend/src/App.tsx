@@ -1,6 +1,6 @@
 import { Toaster } from "@/components/ui/sonner";
 import { Loader2 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import LoginPage from "./components/LoginPage";
 import PasswordGate from "./components/PasswordGate";
 import Sidebar from "./components/Sidebar";
@@ -31,6 +31,14 @@ function getPublicSlug(): string | null {
 export default function App() {
   const { identity, isInitializing } = useInternetIdentity();
   const isAuthenticated = !!identity;
+
+  // Track whether the auth client has ever finished initializing (even once).
+  // This prevents the infinite re-initializing loop in useInternetIdentity from
+  // permanently blocking the app on the loading spinner.
+  const hasEverInitialized = useRef(false);
+  if (!isInitializing) {
+    hasEverInitialized.current = true;
+  }
 
   // Local credential gate — stored in sessionStorage so it clears on tab close
   const [localAuth, setLocalAuth] = useState<boolean>(
@@ -85,8 +93,10 @@ export default function App() {
     );
   }
 
-  // Loading state while restoring identity
-  if (isInitializing) {
+  // Loading state while restoring identity — only block on FIRST init.
+  // If the authClient re-initializes due to the known dep-array loop,
+  // hasEverInitialized stays true and we skip the spinner entirely.
+  if (isInitializing && !hasEverInitialized.current) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
         <div className="flex flex-col items-center gap-3">

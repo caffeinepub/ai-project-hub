@@ -2,18 +2,31 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef } from "react";
 import { Status } from "../backend.d";
 import { useActor } from "./useActor";
+import { useEnsureRegistered } from "./useEnsureRegistered";
 import { projectKeys } from "./useQueries";
 
 const SEED_KEY = "ai_hub_seeded_v1";
+const SEED_FAILED_KEY = "ai_hub_seed_failed_v1";
 
 export function useSeedData(isAuthenticated: boolean) {
   const { actor, isFetching } = useActor();
+  const { isRegistered } = useEnsureRegistered();
   const qc = useQueryClient();
   const seeding = useRef(false);
 
   useEffect(() => {
-    if (!isAuthenticated || !actor || isFetching || seeding.current) return;
+    // Wait until actor is ready AND the principal is registered on the backend
+    if (
+      !isAuthenticated ||
+      !actor ||
+      isFetching ||
+      !isRegistered ||
+      seeding.current
+    )
+      return;
     if (localStorage.getItem(SEED_KEY)) return;
+    // Don't retry seeding if it already failed once this session
+    if (sessionStorage.getItem(SEED_FAILED_KEY)) return;
 
     seeding.current = true;
 
@@ -77,12 +90,13 @@ export function useSeedData(isAuthenticated: boolean) {
         localStorage.setItem(SEED_KEY, "1");
         qc.invalidateQueries({ queryKey: projectKeys.all });
       } catch (_e) {
-        // Silent fail — seeding is best-effort
+        // Silent fail — seeding is best-effort; mark as failed so we don't loop
+        sessionStorage.setItem(SEED_FAILED_KEY, "1");
       } finally {
         seeding.current = false;
       }
     };
 
     void run();
-  }, [isAuthenticated, actor, isFetching, qc]);
+  }, [isAuthenticated, actor, isFetching, isRegistered, qc]);
 }

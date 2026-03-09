@@ -14,7 +14,6 @@ import {
 } from "lucide-react";
 import { motion } from "motion/react";
 import { type FormEvent, useState } from "react";
-import { createActorWithConfig } from "../config";
 
 interface PasswordGateProps {
   onSuccess: () => void;
@@ -29,6 +28,17 @@ const FLOATING_ITEMS = [
   { icon: Zap, label: "Desktop", x: "75%", y: "45%", delay: 0.15 },
 ];
 
+/**
+ * Hash username+password concatenated using SHA-256.
+ * Uses the built-in Web Crypto API — no network call, instant.
+ */
+async function hashCreds(username: string, password: string): Promise<string> {
+  const data = new TextEncoder().encode(username + password);
+  const hashBuffer = await crypto.subtle.digest("SHA-256", data);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
 export default function PasswordGate({ onSuccess }: PasswordGateProps) {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -41,16 +51,22 @@ export default function PasswordGate({ onSuccess }: PasswordGateProps) {
     setIsSubmitting(true);
 
     try {
-      const actor = await createActorWithConfig();
-      const ok = await actor.checkCredentials(username, password);
-      if (ok) {
+      // Hash both the entered credentials and each valid credential pair,
+      // then compare — credentials never leave the browser.
+      const [inputHash, unityHash, syndeliousHash] = await Promise.all([
+        hashCreds(username, password),
+        hashCreds("Unity", "Bacon"),
+        hashCreds("Syndelious", "Leviathan"),
+      ]);
+
+      if (inputHash === unityHash || inputHash === syndeliousHash) {
         onSuccess();
       } else {
         setError("Invalid username or password. Please try again.");
-        setIsSubmitting(false);
       }
     } catch {
-      setError("Connection error. Please try again.");
+      setError("An unexpected error occurred. Please try again.");
+    } finally {
       setIsSubmitting(false);
     }
   };
@@ -184,7 +200,7 @@ export default function PasswordGate({ onSuccess }: PasswordGateProps) {
             {/* Error message */}
             {error && (
               <motion.div
-                className="flex items-center gap-2 p-3 rounded-lg bg-destructive/10 border border-destructive/30 text-destructive text-sm"
+                className="flex items-start gap-2 p-3 rounded-lg bg-destructive/10 border border-destructive/30 text-destructive text-sm"
                 initial={{ opacity: 0, y: -4 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.2 }}
@@ -192,8 +208,8 @@ export default function PasswordGate({ onSuccess }: PasswordGateProps) {
                 aria-live="polite"
                 data-ocid="password_gate.error_state"
               >
-                <AlertCircle className="w-4 h-4 flex-shrink-0" />
-                {error}
+                <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                <span>{error}</span>
               </motion.div>
             )}
 

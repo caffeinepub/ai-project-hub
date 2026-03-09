@@ -15,6 +15,7 @@ import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useActor } from "../hooks/useActor";
 import { useActorStatus } from "../hooks/useActorStatus";
+import { useEnsureRegistered } from "../hooks/useEnsureRegistered";
 import { useCreateProject } from "../hooks/useQueries";
 import { CATEGORY_OPTIONS, makeCategoryFromKind } from "../lib/projectUtils";
 import type { CategoryKind } from "../lib/projectUtils";
@@ -25,7 +26,7 @@ interface CreateProjectPageProps {
   onNavigate: (page: Page, id?: bigint) => void;
 }
 
-const SLOW_CONNECTION_TIMEOUT_MS = 15_000;
+const SLOW_CONNECTION_TIMEOUT_MS = 30_000;
 
 export default function CreateProjectPage({
   onNavigate,
@@ -39,8 +40,9 @@ export default function CreateProjectPage({
   const createProject = useCreateProject();
   const { actor, isFetching: actorLoading } = useActor();
   const { isError: actorError, retry: retryActor } = useActorStatus();
+  const { isRegistered, isChecking: isRegChecking } = useEnsureRegistered();
 
-  const isReady = !!actor && !actorLoading;
+  const isReady = !!actor && !actorLoading && isRegistered;
 
   // Start a timer; if actor isn't ready after SLOW_CONNECTION_TIMEOUT_MS, surface a warning
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -95,7 +97,14 @@ export default function CreateProjectPage({
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       console.error("Create project error:", err);
-      if (message && !message.includes("Not authenticated")) {
+      if (
+        message.toLowerCase().includes("unauthorized") ||
+        message.toLowerCase().includes("not registered")
+      ) {
+        toast.error(
+          "Registration in progress — please wait a moment and try again.",
+        );
+      } else if (message && !message.includes("Not authenticated")) {
         toast.error(`Could not create project: ${message}`);
       }
     }
@@ -159,7 +168,7 @@ export default function CreateProjectPage({
                   <p className="text-muted-foreground mt-0.5">
                     {actorError
                       ? "Could not reach the network. Try again or check your connection."
-                      : "The network is taking longer than usual to respond."}
+                      : "Connection is taking longer than usual. The backend may need a moment to initialize — please try the Retry button."}
                   </p>
                 </div>
                 <Button
@@ -300,12 +309,16 @@ export default function CreateProjectPage({
                 </>
               ) : (
                 <>
-                  {actorLoading && !isReady ? (
+                  {(actorLoading || isRegChecking) && !isReady ? (
                     <Loader2 className="mr-2 w-4 h-4 animate-spin" />
                   ) : (
                     <Sparkles className="mr-2 w-4 h-4" />
                   )}
-                  {actorLoading && !isReady ? "Connecting…" : "Create Project"}
+                  {actorLoading && !actor
+                    ? "Connecting…"
+                    : isRegChecking && !isRegistered
+                      ? "Registering…"
+                      : "Create Project"}
                 </>
               )}
             </Button>

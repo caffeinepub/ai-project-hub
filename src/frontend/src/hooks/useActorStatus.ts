@@ -3,14 +3,20 @@
  */
 import { useQueryClient } from "@tanstack/react-query";
 import { useCallback, useMemo } from "react";
+import { ACTOR_QUERY_KEY } from "./useActor";
 import { useInternetIdentity } from "./useInternetIdentity";
+
+const ANON_PRINCIPAL = "__anon__";
 
 export function useActorStatus() {
   const { identity } = useInternetIdentity();
   const queryClient = useQueryClient();
 
-  const principalStr = identity?.getPrincipal().toString() ?? "anon";
-  const queryKey = useMemo(() => ["actor", principalStr], [principalStr]);
+  const principalStr = identity?.getPrincipal().toString() ?? ANON_PRINCIPAL;
+  const queryKey = useMemo(
+    () => [ACTOR_QUERY_KEY, principalStr],
+    [principalStr],
+  );
 
   const queryState = queryClient.getQueryState(queryKey);
 

@@ -23,12 +23,12 @@ import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useActor } from "../hooks/useActor";
 import { useActorStatus } from "../hooks/useActorStatus";
-import { useEnsureRegistered } from "../hooks/useEnsureRegistered";
 import { useCreateProject } from "../hooks/useQueries";
 import { listTemplates } from "../lib/customTemplates";
 import type { CustomTemplate } from "../lib/customTemplates";
 import { CATEGORY_OPTIONS, makeCategoryFromKind } from "../lib/projectUtils";
 import type { CategoryKind } from "../lib/projectUtils";
+import { getSecretParameter } from "../utils/urlParams";
 
 type Page = "dashboard" | "projects" | "new" | "detail" | "templates";
 
@@ -54,9 +54,9 @@ export default function CreateProjectPage({
   const createProject = useCreateProject();
   const { actor, isFetching: actorLoading } = useActor();
   const { isError: actorError, retry: retryActor } = useActorStatus();
-  const { isRegistered, isChecking: isRegChecking } = useEnsureRegistered();
 
-  const isReady = !!actor && !actorLoading && isRegistered;
+  // Button is ready as soon as we have an actor — don't wait for registration
+  const isReady = !!actor && !actorLoading;
 
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -85,12 +85,22 @@ export default function CreateProjectPage({
       toast.error("Please fill in all required fields");
       return;
     }
-    if (!isReady) {
+    if (!actor) {
       toast.error(
         "Still connecting to the backend — please wait a moment and try again.",
       );
       return;
     }
+
+    // Ensure registration before creating project
+    try {
+      const adminToken = getSecretParameter("caffeineAdminToken") || "";
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await (actor as any)._initializeAccessControlWithSecret(adminToken);
+    } catch {
+      // May already be initialised — continue
+    }
+
     try {
       const category = makeCategoryFromKind(
         categoryKind,
@@ -426,16 +436,12 @@ export default function CreateProjectPage({
                 </>
               ) : (
                 <>
-                  {(actorLoading || isRegChecking) && !isReady ? (
+                  {actorLoading && !actor ? (
                     <Loader2 className="mr-2 w-4 h-4 animate-spin" />
                   ) : (
                     <Sparkles className="mr-2 w-4 h-4" />
                   )}
-                  {actorLoading && !actor
-                    ? "Connecting…"
-                    : isRegChecking && !isRegistered
-                      ? "Registering…"
-                      : "Create Project"}
+                  {actorLoading && !actor ? "Connecting…" : "Create Project"}
                 </>
               )}
             </Button>

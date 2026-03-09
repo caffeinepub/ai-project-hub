@@ -1,7 +1,9 @@
 /**
- * useEnsureRegistered — verifies the backend actually knows who the caller is
- * by querying their role. If they come back as #guest it means registration
- * hasn't completed yet and we retry automatically (up to 5 times).
+ * useEnsureRegistered — initialises access control for the authenticated
+ * caller and verifies they are registered on the backend.
+ *
+ * Actor creation is kept separate (useActor). Registration (network call)
+ * happens here with up to 5 retries.
  */
 import { useQuery } from "@tanstack/react-query";
 import { UserRole } from "../backend.d";
@@ -19,21 +21,22 @@ export function useEnsureRegistered() {
     queryFn: async () => {
       if (!actor || !identity) return UserRole.guest;
 
+      const adminToken = getSecretParameter("caffeineAdminToken") || "";
+
+      // Step 1: Initialise access control (registers the caller if needed).
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        await (actor as any)._initializeAccessControlWithSecret(adminToken);
+      } catch {
+        // May fail if already initialised — continue to role check.
+      }
+
+      // Step 2: Check role with retries via React Query.
       try {
         const role = await actor.getCallerUserRole();
         if (role === UserRole.admin || role === UserRole.user) return role;
       } catch {
-        // ignore — likely not registered yet
-      }
-
-      // Not registered yet — attempt registration then re-check
-      try {
-        const adminToken = getSecretParameter("caffeineAdminToken") || "";
-        await actor._initializeAccessControlWithSecret(adminToken);
-        const role2 = await actor.getCallerUserRole();
-        if (role2 === UserRole.admin || role2 === UserRole.user) return role2;
-      } catch (err) {
-        console.warn("[useEnsureRegistered] registration retry failed:", err);
+        // Ignore — will retry via React Query
       }
 
       return UserRole.guest;
@@ -41,7 +44,7 @@ export function useEnsureRegistered() {
     enabled: !!actor && !actorLoading && !!identity,
     retry: 5,
     retryDelay: (attempt) => Math.min(1500 * (attempt + 1), 8_000),
-    staleTime: 5 * 60 * 1000, // 5 minutes
+    staleTime: 5 * 60 * 1000,
   });
 
   const isRegistered =

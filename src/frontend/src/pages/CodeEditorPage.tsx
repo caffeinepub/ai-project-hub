@@ -263,25 +263,49 @@ function applyInstruction(
   return result;
 }
 
+// ── Build recent conversation context from chat history ────────
+function buildRecentHistory(
+  messages: ChatMessage[],
+  maxMessages = 6,
+): { role: "user" | "assistant"; content: string }[] {
+  // Filter to user and assistant messages only, take the last N, exclude loading
+  return messages
+    .filter(
+      (m) =>
+        (m.role === "user" || m.role === "assistant") &&
+        !m.isLoading &&
+        m.text.trim().length > 0,
+    )
+    .slice(-maxMessages)
+    .map((m) => ({ role: m.role as "user" | "assistant", content: m.text }));
+}
+
 // ── Pollinations AI API call — clarification mode ─────────────
 async function callFreeAIForClarification(
   currentContent: string,
   language: string,
   instruction: string,
+  recentHistory: { role: "user" | "assistant"; content: string }[],
   trainingContext?: string,
 ): Promise<{ interpretation: string; question: string | null }> {
   const systemPrompt = [
     "You are a code editor assistant. Your job is to interpret what the user wants and ask one short clarifying question if needed before making any changes.",
     trainingContext ? `\nProject context:\n${trainingContext}` : "",
+    "\nIMPORTANT: You have access to the recent conversation history. Use it to understand pronouns like 'it', 'that', 'the same', references to previous edits, and follow-up requests like 'make it bigger' or 'undo that'. Always interpret the current instruction in light of what was discussed just before.",
     "\nRules:",
     "- DO NOT output any code.",
-    "- First, state in plain language what you think the user wants (1-2 sentences).",
+    "- First, state in plain language what you think the user wants (1-2 sentences), taking prior messages into account.",
     "- If the request is ambiguous or could go multiple ways, ask ONE clarifying question.",
     "- If the request is clear enough, say you are ready and ask the user to confirm.",
     '- Format your response as JSON with two fields: "interpretation" (string) and "question" (string or null). If no question is needed, set question to null.',
     '- Example: {"interpretation": "You want to add a fixed top navigation bar with Home and About links.", "question": null}',
     '- Example: {"interpretation": "You want to change the header.", "question": "Do you want to change the text content, the styling (size/color), or both?"}',
   ].join("\n");
+
+  const historyMessages = recentHistory.map((m) => ({
+    role: m.role,
+    content: m.content,
+  }));
 
   const response = await fetch("https://text.pollinations.ai/", {
     method: "POST",
@@ -292,7 +316,12 @@ async function callFreeAIForClarification(
         { role: "system", content: systemPrompt },
         {
           role: "user",
-          content: `Language: ${language}\n\nCurrent code (first 800 chars):\n${currentContent.slice(0, 800)}\n\nUser instruction: ${instruction}`,
+          content: `Language: ${language}\n\nCurrent code (first 800 chars):\n${currentContent.slice(0, 800)}`,
+        },
+        ...historyMessages,
+        {
+          role: "user",
+          content: `New instruction: ${instruction}`,
         },
       ],
       seed: 42,
@@ -325,11 +354,23 @@ async function callFreeAIApply(
   currentContent: string,
   language: string,
   instruction: string,
+  recentHistory: { role: "user" | "assistant"; content: string }[],
   trainingContext?: string,
 ): Promise<string> {
-  const systemPrompt = trainingContext
-    ? `You are a code editor assistant. The user has provided the following project training context:\n\n${trainingContext}\n\n---\n\nUse this context to inform all code changes. Return ONLY the complete modified code with no explanation, no markdown code fences, no commentary. Just output the raw code.`
-    : "You are a code editor assistant. The user will provide code and an instruction. Return ONLY the complete modified code with no explanation, no markdown code fences, no commentary. Just output the raw code.";
+  const systemPrompt = [
+    "You are a code editor assistant. The user will provide code and an instruction. Return ONLY the complete modified code with no explanation, no markdown code fences, no commentary. Just output the raw code.",
+    trainingContext
+      ? `\nProject training context:\n${trainingContext}\n\nUse this context to inform all code changes.`
+      : "",
+    "\nIMPORTANT: You have access to the recent conversation history. Use it to understand references like 'it', 'that', 'the same thing', and follow-up instructions like 'make it bigger' or 'now add the same color to the footer'. Always apply the instruction in the context of what was recently discussed.",
+  ]
+    .filter(Boolean)
+    .join("\n");
+
+  const historyMessages = recentHistory.map((m) => ({
+    role: m.role,
+    content: m.content,
+  }));
 
   const response = await fetch("https://text.pollinations.ai/", {
     method: "POST",
@@ -340,7 +381,12 @@ async function callFreeAIApply(
         { role: "system", content: systemPrompt },
         {
           role: "user",
-          content: `Language: ${language}\n\nCurrent code:\n${currentContent}\n\nInstruction: ${instruction}`,
+          content: `Language: ${language}\n\nCurrent code:\n${currentContent}`,
+        },
+        ...historyMessages,
+        {
+          role: "user",
+          content: `Apply this instruction now: ${instruction}`,
         },
       ],
       seed: 42,
@@ -730,10 +776,12 @@ export default function CodeEditorPage({
     let newPending: PendingAction | null = null;
 
     try {
+      const recentHistory = buildRecentHistory(chatMessages);
       const { interpretation, question } = await callFreeAIForClarification(
         content,
         language,
         instruction,
+        recentHistory,
         trainingContext || undefined,
       );
 
@@ -767,7 +815,15 @@ export default function CodeEditorPage({
     );
 
     setIsAiWorking(false);
-  }, [artifact, chatInput, content, isAiWorking, language, trainingContext]);
+  }, [
+    artifact,
+    chatInput,
+    chatMessages,
+    content,
+    isAiWorking,
+    language,
+    trainingContext,
+  ]);
 
   // ── Phase 2: Apply the confirmed change ────────────────────────
   const handleConfirmApply = useCallback(async () => {
@@ -793,10 +849,12 @@ export default function CodeEditorPage({
     let resultText: string;
 
     try {
+      const recentHistory = buildRecentHistory(chatMessages);
       newContent = await callFreeAIApply(
         content,
         language,
         pendingAction.instruction,
+        recentHistory,
         trainingContext || undefined,
       );
       resultText = "Done! Changes applied. Don't forget to save.";
@@ -836,6 +894,7 @@ export default function CodeEditorPage({
     setIsAiWorking(false);
   }, [
     artifact,
+    chatMessages,
     content,
     language,
     pendingAction,

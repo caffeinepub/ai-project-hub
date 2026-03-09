@@ -89,6 +89,7 @@ export const idlService = IDL.Service({
       [],
     ),
   'assignCallerUserRole' : IDL.Func([IDL.Principal, UserRole], [], []),
+  'checkCredentials' : IDL.Func([IDL.Text, IDL.Text], [IDL.Bool], ['query']),
   'createArtifact' : IDL.Func(
       [IDL.Nat, IDL.Text, Language, IDL.Text],
       [Artifact],
@@ -221,6 +222,7 @@ export const idlFactory = ({ IDL }) => {
         [],
       ),
     'assignCallerUserRole' : IDL.Func([IDL.Principal, UserRole], [], []),
+    'checkCredentials' : IDL.Func([IDL.Text, IDL.Text], [IDL.Bool], ['query']),
     'createArtifact' : IDL.Func(
         [IDL.Nat, IDL.Text, Language, IDL.Text],
         [Artifact],

@@ -489,3 +489,58 @@ export function useAddRevision() {
     },
   });
 }
+
+export function useCloneProject() {
+  const { actor } = useActor();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (project: Project) => {
+      if (!actor) throw new Error("Not authenticated");
+      // Fetch artifacts in parallel with creating new project
+      const [sourceArtifacts, newProject] = await Promise.all([
+        actor.getArtifacts(project.id),
+        actor.createProject(
+          `Copy of ${project.name}`,
+          project.category,
+          project.description,
+        ),
+      ]);
+      // Copy notes if present
+      if (project.notes) {
+        await actor.updateProject(
+          newProject.id,
+          newProject.name,
+          null,
+          null,
+          null,
+          project.notes,
+        );
+      }
+      // Copy goals sequentially
+      for (const goal of project.goals) {
+        await actor.addGoal(newProject.id, goal.text);
+      }
+      // Copy milestones sequentially
+      for (const ms of project.milestones) {
+        await actor.addMilestone(newProject.id, ms.title);
+      }
+      // Copy artifacts sequentially
+      for (const art of sourceArtifacts) {
+        await actor.createArtifact(
+          newProject.id,
+          art.filename,
+          art.language,
+          art.content,
+        );
+      }
+      return newProject;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: projectKeys.all });
+      toast.success("Project cloned!");
+    },
+    onError: () => {
+      toast.error("Failed to clone project");
+    },
+  });
+}

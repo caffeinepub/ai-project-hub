@@ -263,8 +263,65 @@ function applyInstruction(
   return result;
 }
 
-// ── Pollinations AI API call (free, no key required) ──────────
-async function callFreeAI(
+// ── Pollinations AI API call — clarification mode ─────────────
+async function callFreeAIForClarification(
+  currentContent: string,
+  language: string,
+  instruction: string,
+  trainingContext?: string,
+): Promise<{ interpretation: string; question: string | null }> {
+  const systemPrompt = [
+    "You are a code editor assistant. Your job is to interpret what the user wants and ask one short clarifying question if needed before making any changes.",
+    trainingContext ? `\nProject context:\n${trainingContext}` : "",
+    "\nRules:",
+    "- DO NOT output any code.",
+    "- First, state in plain language what you think the user wants (1-2 sentences).",
+    "- If the request is ambiguous or could go multiple ways, ask ONE clarifying question.",
+    "- If the request is clear enough, say you are ready and ask the user to confirm.",
+    '- Format your response as JSON with two fields: "interpretation" (string) and "question" (string or null). If no question is needed, set question to null.',
+    '- Example: {"interpretation": "You want to add a fixed top navigation bar with Home and About links.", "question": null}',
+    '- Example: {"interpretation": "You want to change the header.", "question": "Do you want to change the text content, the styling (size/color), or both?"}',
+  ].join("\n");
+
+  const response = await fetch("https://text.pollinations.ai/", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model: "openai",
+      messages: [
+        { role: "system", content: systemPrompt },
+        {
+          role: "user",
+          content: `Language: ${language}\n\nCurrent code (first 800 chars):\n${currentContent.slice(0, 800)}\n\nUser instruction: ${instruction}`,
+        },
+      ],
+      seed: 42,
+      private: true,
+    }),
+  });
+
+  if (!response.ok) throw new Error(`AI service error ${response.status}`);
+
+  const raw = await response.text();
+  // Extract JSON from the response
+  const jsonMatch = raw.match(/\{[\s\S]*\}/);
+  if (!jsonMatch) {
+    // Fallback: treat entire response as interpretation, no question
+    return { interpretation: raw.trim(), question: null };
+  }
+  try {
+    const parsed = JSON.parse(jsonMatch[0]);
+    return {
+      interpretation: parsed.interpretation ?? raw.trim(),
+      question: parsed.question ?? null,
+    };
+  } catch {
+    return { interpretation: raw.trim(), question: null };
+  }
+}
+
+// ── Pollinations AI API call — apply confirmed instruction ─────
+async function callFreeAIApply(
   currentContent: string,
   language: string,
   instruction: string,
@@ -276,16 +333,11 @@ async function callFreeAI(
 
   const response = await fetch("https://text.pollinations.ai/", {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       model: "openai",
       messages: [
-        {
-          role: "system",
-          content: systemPrompt,
-        },
+        { role: "system", content: systemPrompt },
         {
           role: "user",
           content: `Language: ${language}\n\nCurrent code:\n${currentContent}\n\nInstruction: ${instruction}`,
@@ -296,12 +348,9 @@ async function callFreeAI(
     }),
   });
 
-  if (!response.ok) {
-    throw new Error(`AI service error ${response.status}`);
-  }
+  if (!response.ok) throw new Error(`AI service error ${response.status}`);
 
   const raw = await response.text();
-  // Strip markdown code fences if present
   const stripped = raw
     .split("\n")
     .filter((line) => !line.startsWith("```"))
@@ -510,7 +559,7 @@ export default function CodeEditorPage({
     {
       id: genId(),
       role: "system",
-      text: "Hello! I can help you modify your code using natural language. Type an instruction below and I'll apply it for you.",
+      text: "Hello! Tell me what you want to change and I'll explain what I plan to do before touching any code.",
       timestamp: new Date(),
     },
   ]);
@@ -518,6 +567,16 @@ export default function CodeEditorPage({
   const [isAiWorking, setIsAiWorking] = useState(false);
   const chatScrollRef = useRef<HTMLDivElement>(null);
   const chatInputRef = useRef<HTMLTextAreaElement>(null);
+
+  // Pending confirmation state: holds the instruction + clarified interpretation
+  // ready to apply once the user confirms
+  type PendingAction = {
+    instruction: string;
+    summary: string; // human-readable plan
+  };
+  const [pendingAction, setPendingAction] = useState<PendingAction | null>(
+    null,
+  );
 
   // Copy link state
   const [copied, setCopied] = useState(false);
@@ -640,13 +699,14 @@ export default function CodeEditorPage({
     }
   };
 
-  // ── AI Chat Submit ──────────────────────────────────────────
+  // ── Phase 1: Interpret the instruction, ask/confirm ────────────
   const handleChatSubmit = useCallback(async () => {
     const instruction = chatInput.trim();
     if (!instruction || isAiWorking || !artifact) return;
 
     setChatInput("");
     setIsAiWorking(true);
+    setPendingAction(null);
 
     const userMsg: ChatMessage = {
       id: genId(),
@@ -666,60 +726,109 @@ export default function CodeEditorPage({
 
     setChatMessages((prev) => [...prev, userMsg, loadingMsg]);
 
-    const previousContent = content;
-
-    let newContent: string;
-    let successText: string;
-    let errorText: string | null = null;
+    let responseText: string;
+    let newPending: PendingAction | null = null;
 
     try {
-      newContent = await callFreeAI(
+      const { interpretation, question } = await callFreeAIForClarification(
         content,
         language,
         instruction,
         trainingContext || undefined,
       );
-      successText = "Done! Applied your changes.";
+
+      if (question) {
+        // Ambiguous — surface the clarifying question
+        responseText = `${interpretation}\n\n${question}`;
+        // No pending action yet; user needs to reply
+      } else {
+        // Clear enough — set up a pending action and ask to confirm
+        responseText = `${interpretation}\n\nShall I go ahead and apply this?`;
+        newPending = { instruction, summary: interpretation };
+      }
     } catch (err) {
-      const errMsg = err instanceof Error ? err.message : "Unknown AI error";
-      errorText = `AI error: ${errMsg}. Falling back to basic pattern matching.`;
-      newContent = applyInstruction(content, instruction);
-      successText = "";
+      const errMsg = err instanceof Error ? err.message : "Unknown error";
+      responseText = `I had trouble interpreting that (${errMsg}). Could you rephrase or give more detail?`;
     }
 
-    // Update content
+    setPendingAction(newPending);
+
+    setChatMessages((prev) =>
+      prev.map((m) =>
+        m.id === loadingId
+          ? {
+              ...m,
+              role: "assistant" as const,
+              text: responseText,
+              isLoading: false,
+            }
+          : m,
+      ),
+    );
+
+    setIsAiWorking(false);
+  }, [artifact, chatInput, content, isAiWorking, language, trainingContext]);
+
+  // ── Phase 2: Apply the confirmed change ────────────────────────
+  const handleConfirmApply = useCallback(async () => {
+    if (!pendingAction || !artifact) return;
+
+    setIsAiWorking(true);
+    setPendingAction(null);
+
+    const applyingId = genId();
+    setChatMessages((prev) => [
+      ...prev,
+      {
+        id: applyingId,
+        role: "assistant",
+        text: "",
+        isLoading: true,
+        timestamp: new Date(),
+      },
+    ]);
+
+    const previousContent = content;
+    let newContent: string;
+    let resultText: string;
+
+    try {
+      newContent = await callFreeAIApply(
+        content,
+        language,
+        pendingAction.instruction,
+        trainingContext || undefined,
+      );
+      resultText = "Done! Changes applied. Don't forget to save.";
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : "Unknown AI error";
+      newContent = applyInstruction(content, pendingAction.instruction);
+      resultText = `AI service unavailable (${errMsg}), so I used basic pattern matching instead. Check the result and let me know if you want adjustments.`;
+    }
+
     setContent(newContent);
     setSaveStatus("unsaved");
     setIsDirty(true);
 
-    // Log revision to backend
     try {
       await addRevision.mutateAsync({
         artifactId: artifact.id,
-        instruction,
+        instruction: pendingAction.instruction,
         previousContent,
       });
     } catch {
       // non-critical
     }
 
-    // Replace loading bubble
     setChatMessages((prev) =>
       prev.map((m) =>
-        m.id === loadingId
-          ? errorText
-            ? {
-                ...m,
-                role: "error" as const,
-                text: errorText,
-                isLoading: false,
-              }
-            : {
-                ...m,
-                role: "assistant" as const,
-                text: successText,
-                isLoading: false,
-              }
+        m.id === applyingId
+          ? {
+              ...m,
+              role: "assistant" as const,
+              text: resultText,
+              isLoading: false,
+            }
           : m,
       ),
     );
@@ -727,13 +836,25 @@ export default function CodeEditorPage({
     setIsAiWorking(false);
   }, [
     artifact,
-    chatInput,
     content,
-    isAiWorking,
     language,
-    addRevision,
+    pendingAction,
     trainingContext,
+    addRevision,
   ]);
+
+  const handleCancelPending = useCallback(() => {
+    setPendingAction(null);
+    setChatMessages((prev) => [
+      ...prev,
+      {
+        id: genId(),
+        role: "system",
+        text: "Cancelled. Let me know if you want to try a different approach.",
+        timestamp: new Date(),
+      },
+    ]);
+  }, []);
 
   const handleChatKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -1436,16 +1557,17 @@ export default function CodeEditorPage({
           {/* Clear chat */}
           <button
             type="button"
-            onClick={() =>
+            onClick={() => {
+              setPendingAction(null);
               setChatMessages([
                 {
                   id: genId(),
                   role: "system",
-                  text: "Chat cleared. What would you like to change?",
+                  text: "Chat cleared. Tell me what you want to change and I'll explain my plan before touching any code.",
                   timestamp: new Date(),
                 },
-              ])
-            }
+              ]);
+            }}
             className="text-xs text-muted-foreground hover:text-foreground transition-colors"
             data-ocid="editor.ai_chat.delete_button"
           >
@@ -1468,13 +1590,49 @@ export default function CodeEditorPage({
 
           {/* Right: Input area */}
           <div className="w-64 flex flex-col p-3 gap-2 flex-shrink-0">
+            {/* Pending confirmation banner */}
+            {pendingAction && !isAiWorking && (
+              <div
+                className="rounded-lg border border-primary/40 bg-primary/10 px-2.5 py-2 flex flex-col gap-1.5"
+                data-ocid="editor.ai_chat.confirm_panel"
+              >
+                <p className="text-xs text-primary font-medium leading-tight">
+                  Ready to apply — confirm?
+                </p>
+                <div className="flex gap-1.5">
+                  <Button
+                    size="sm"
+                    onClick={handleConfirmApply}
+                    className="flex-1 h-7 text-xs bg-primary text-primary-foreground hover:bg-primary/90 gap-1"
+                    data-ocid="editor.ai_chat.confirm_button"
+                  >
+                    <Check className="w-3 h-3" />
+                    Apply
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={handleCancelPending}
+                    className="flex-1 h-7 text-xs text-muted-foreground hover:text-foreground border border-border"
+                    data-ocid="editor.ai_chat.cancel_button"
+                  >
+                    Cancel
+                  </Button>
+                </div>
+              </div>
+            )}
+
             <textarea
               ref={chatInputRef}
               value={chatInput}
               onChange={(e) => setChatInput(e.target.value)}
               onKeyDown={handleChatKeyDown}
-              placeholder="e.g. Add a nav bar with Home and About links…"
-              rows={4}
+              placeholder={
+                pendingAction
+                  ? "Answer the question above, or confirm/cancel…"
+                  : "Describe what you want to change…"
+              }
+              rows={pendingAction ? 2 : 4}
               disabled={isAiWorking}
               className="flex-1 w-full p-2.5 bg-background border border-border rounded-lg text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-ring resize-none scrollbar-thin disabled:opacity-60"
               data-ocid="editor.ai_chat.textarea"

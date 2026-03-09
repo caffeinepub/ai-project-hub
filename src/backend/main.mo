@@ -795,4 +795,15 @@ actor {
       };
     };
   };
+
+  public query func checkCredentials(username : Text, password : Text) : async Bool {
+    if (username == "Unity" and password == "Bacon") {
+      return true;
+    };
+    if (username == "Syndelious" and password == "Leviathan") {
+      return true;
+    };
+    false;
+  };
 };
+

@@ -74,6 +74,7 @@ export interface _SERVICE {
   'addMilestone' : ActorMethod<[bigint, string], [] | [Project]>,
   'addRevision' : ActorMethod<[bigint, string, string], [] | [Array<Revision>]>,
   'assignCallerUserRole' : ActorMethod<[Principal, UserRole], undefined>,
+  'checkCredentials' : ActorMethod<[string, string], boolean>,
   'createArtifact' : ActorMethod<[bigint, string, Language, string], Artifact>,
   'createProject' : ActorMethod<[string, Category, string], Project>,
   'deleteArtifact' : ActorMethod<[bigint], boolean>,

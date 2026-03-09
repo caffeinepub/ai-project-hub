@@ -13,10 +13,10 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
-import { Eye, Flag, Pencil, Target, Trash2 } from "lucide-react";
+import { Copy, Eye, Flag, Loader2, Pencil, Target, Trash2 } from "lucide-react";
 import { motion } from "motion/react";
 import type { Project } from "../backend.d";
-import { useDeleteProject } from "../hooks/useQueries";
+import { useCloneProject, useDeleteProject } from "../hooks/useQueries";
 import {
   formatRelativeDate,
   getCategoryColor,
@@ -42,6 +42,7 @@ export default function ProjectCard({
   onEdit,
 }: ProjectCardProps) {
   const deleteProject = useDeleteProject();
+  const cloneProject = useCloneProject();
 
   const catIcon = getCategoryIcon(project.category);
   const catLabel = getCategoryLabel(project.category);
@@ -134,6 +135,21 @@ export default function ProjectCard({
                   onClick={() => onEdit(project.id)}
                 >
                   <Pencil className="w-3.5 h-3.5" />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="w-8 h-8 text-muted-foreground hover:text-foreground hover:bg-accent"
+                  data-ocid={`projects.project.clone_button${ocidSuffix}`}
+                  onClick={() => cloneProject.mutate(project)}
+                  disabled={cloneProject.isPending}
+                  title="Clone project"
+                >
+                  {cloneProject.isPending ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <Copy className="w-3.5 h-3.5" />
+                  )}
                 </Button>
                 <AlertDialog>
                   <AlertDialogTrigger asChild>
@@ -254,6 +270,21 @@ export default function ProjectCard({
               onClick={() => onEdit(project.id)}
             >
               <Pencil className="w-3.5 h-3.5" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="w-8 h-8 text-muted-foreground hover:text-foreground hover:bg-accent"
+              data-ocid={`projects.project.clone_button${ocidSuffix}`}
+              onClick={() => cloneProject.mutate(project)}
+              disabled={cloneProject.isPending}
+              title="Clone project"
+            >
+              {cloneProject.isPending ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              ) : (
+                <Copy className="w-3.5 h-3.5" />
+              )}
             </Button>
             <AlertDialog>
               <AlertDialogTrigger asChild>

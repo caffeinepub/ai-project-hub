@@ -2,6 +2,7 @@ import { Toaster } from "@/components/ui/sonner";
 import { Loader2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import LoginPage from "./components/LoginPage";
+import PasswordGate from "./components/PasswordGate";
 import Sidebar from "./components/Sidebar";
 import { useInternetIdentity } from "./hooks/useInternetIdentity";
 import { useSeedData } from "./hooks/useSeedData";
@@ -31,6 +32,11 @@ export default function App() {
   const { identity, isInitializing } = useInternetIdentity();
   const isAuthenticated = !!identity;
 
+  // Local credential gate — stored in sessionStorage so it clears on tab close
+  const [localAuth, setLocalAuth] = useState<boolean>(
+    () => sessionStorage.getItem("localAuth") === "true",
+  );
+
   const [nav, setNav] = useState<NavState>({ page: "dashboard" });
   const [publicSlug] = useState<string | null>(() => getPublicSlug());
 
@@ -59,6 +65,21 @@ export default function App() {
     return (
       <>
         <PublicArtifactPage slug={publicSlug} />
+        <Toaster richColors />
+      </>
+    );
+  }
+
+  // ── Password gate — must pass before anything else is shown ──
+  if (!localAuth) {
+    return (
+      <>
+        <PasswordGate
+          onSuccess={() => {
+            sessionStorage.setItem("localAuth", "true");
+            setLocalAuth(true);
+          }}
+        />
         <Toaster richColors />
       </>
     );

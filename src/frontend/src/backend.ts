@@ -180,6 +180,7 @@ export interface backendInterface {
     addMilestone(projectId: bigint, title: string): Promise<Project | null>;
     addRevision(artifactId: bigint, instruction: string, previousContent: string): Promise<Array<Revision> | null>;
     assignCallerUserRole(user: Principal, role: UserRole): Promise<void>;
+    checkCredentials(username: string, password: string): Promise<boolean>;
     createArtifact(projectId: bigint, filename: string, language: Language, content: string): Promise<Artifact>;
     createProject(name: string, category: Category, description: string): Promise<Project>;
     deleteArtifact(id: bigint): Promise<boolean>;
@@ -274,6 +275,20 @@ export class Backend implements backendInterface {
             }
         } else {
             const result = await this.actor.assignCallerUserRole(arg0, to_candid_UserRole_n9(this._uploadFile, this._downloadFile, arg1));
+            return result;
+        }
+    }
+    async checkCredentials(arg0: string, arg1: string): Promise<boolean> {
+        if (this.processError) {
+            try {
+                const result = await this.actor.checkCredentials(arg0, arg1);
+                return result;
+            } catch (e) {
+                this.processError(e);
+                throw new Error("unreachable");
+            }
+        } else {
+            const result = await this.actor.checkCredentials(arg0, arg1);
             return result;
         }
     }

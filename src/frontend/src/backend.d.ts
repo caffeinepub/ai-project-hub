@@ -97,6 +97,7 @@ export interface backendInterface {
     addMilestone(projectId: bigint, title: string): Promise<Project | null>;
     addRevision(artifactId: bigint, instruction: string, previousContent: string): Promise<Array<Revision> | null>;
     assignCallerUserRole(user: Principal, role: UserRole): Promise<void>;
+    checkCredentials(username: string, password: string): Promise<boolean>;
     createArtifact(projectId: bigint, filename: string, language: Language, content: string): Promise<Artifact>;
     createProject(name: string, category: Category, description: string): Promise<Project>;
     deleteArtifact(id: bigint): Promise<boolean>;

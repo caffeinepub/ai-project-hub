@@ -1,7 +1,5 @@
 /**
- * useActorStatus — exposes the full React Query state for the actor query
- * so that pages can detect errors and trigger retries without modifying
- * the protected useActor.ts file.
+ * useActorStatus — exposes error state and retry for the actor query.
  */
 import { useQueryClient } from "@tanstack/react-query";
 import { useCallback, useMemo } from "react";
@@ -11,7 +9,7 @@ export function useActorStatus() {
   const { identity } = useInternetIdentity();
   const queryClient = useQueryClient();
 
-  const principalStr = identity?.getPrincipal().toString() ?? undefined;
+  const principalStr = identity?.getPrincipal().toString() ?? "anon";
   const queryKey = useMemo(() => ["actor", principalStr], [principalStr]);
 
   const queryState = queryClient.getQueryState(queryKey);

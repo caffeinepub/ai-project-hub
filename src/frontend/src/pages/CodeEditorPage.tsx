@@ -745,86 +745,6 @@ export default function CodeEditorPage({
     }
   };
 
-  // ── Phase 1: Interpret the instruction, ask/confirm ────────────
-  const handleChatSubmit = useCallback(async () => {
-    const instruction = chatInput.trim();
-    if (!instruction || isAiWorking || !artifact) return;
-
-    setChatInput("");
-    setIsAiWorking(true);
-    setPendingAction(null);
-
-    const userMsg: ChatMessage = {
-      id: genId(),
-      role: "user",
-      text: instruction,
-      timestamp: new Date(),
-    };
-
-    const loadingId = genId();
-    const loadingMsg: ChatMessage = {
-      id: loadingId,
-      role: "assistant",
-      text: "",
-      isLoading: true,
-      timestamp: new Date(),
-    };
-
-    setChatMessages((prev) => [...prev, userMsg, loadingMsg]);
-
-    let responseText: string;
-    let newPending: PendingAction | null = null;
-
-    try {
-      const recentHistory = buildRecentHistory(chatMessages);
-      const { interpretation, question } = await callFreeAIForClarification(
-        content,
-        language,
-        instruction,
-        recentHistory,
-        trainingContext || undefined,
-      );
-
-      if (question) {
-        // Ambiguous — surface the clarifying question
-        responseText = `${interpretation}\n\n${question}`;
-        // No pending action yet; user needs to reply
-      } else {
-        // Clear enough — set up a pending action and ask to confirm
-        responseText = `${interpretation}\n\nShall I go ahead and apply this?`;
-        newPending = { instruction, summary: interpretation };
-      }
-    } catch (err) {
-      const errMsg = err instanceof Error ? err.message : "Unknown error";
-      responseText = `I had trouble interpreting that (${errMsg}). Could you rephrase or give more detail?`;
-    }
-
-    setPendingAction(newPending);
-
-    setChatMessages((prev) =>
-      prev.map((m) =>
-        m.id === loadingId
-          ? {
-              ...m,
-              role: "assistant" as const,
-              text: responseText,
-              isLoading: false,
-            }
-          : m,
-      ),
-    );
-
-    setIsAiWorking(false);
-  }, [
-    artifact,
-    chatInput,
-    chatMessages,
-    content,
-    isAiWorking,
-    language,
-    trainingContext,
-  ]);
-
   // ── Phase 2: Apply the confirmed change ────────────────────────
   const handleConfirmApply = useCallback(async () => {
     if (!pendingAction || !artifact) return;
@@ -900,6 +820,125 @@ export default function CodeEditorPage({
     pendingAction,
     trainingContext,
     addRevision,
+  ]);
+
+  // ── Phase 1: Interpret the instruction, ask/confirm ────────────
+  const handleChatSubmit = useCallback(async () => {
+    const instruction = chatInput.trim();
+    if (!instruction || isAiWorking || !artifact) return;
+
+    // If there's a pending action and the user says an affirmative word, apply it directly
+    const affirmatives = [
+      "yes",
+      "yeah",
+      "yep",
+      "yup",
+      "sure",
+      "ok",
+      "okay",
+      "go",
+      "do it",
+      "apply",
+      "confirm",
+      "proceed",
+      "go ahead",
+      "sounds good",
+      "do that",
+      "correct",
+      "right",
+      "exactly",
+    ];
+    if (
+      pendingAction &&
+      affirmatives.includes(instruction.toLowerCase().trim())
+    ) {
+      setChatInput("");
+      const affirmMsg: ChatMessage = {
+        id: genId(),
+        role: "user",
+        text: instruction,
+        timestamp: new Date(),
+      };
+      setChatMessages((prev) => [...prev, affirmMsg]);
+      handleConfirmApply();
+      return;
+    }
+
+    setChatInput("");
+    setIsAiWorking(true);
+    setPendingAction(null);
+
+    const userMsg: ChatMessage = {
+      id: genId(),
+      role: "user",
+      text: instruction,
+      timestamp: new Date(),
+    };
+
+    const loadingId = genId();
+    const loadingMsg: ChatMessage = {
+      id: loadingId,
+      role: "assistant",
+      text: "",
+      isLoading: true,
+      timestamp: new Date(),
+    };
+
+    setChatMessages((prev) => [...prev, userMsg, loadingMsg]);
+
+    let responseText: string;
+    let newPending: PendingAction | null = null;
+
+    try {
+      const recentHistory = buildRecentHistory(chatMessages);
+      const { interpretation, question } = await callFreeAIForClarification(
+        content,
+        language,
+        instruction,
+        recentHistory,
+        trainingContext || undefined,
+      );
+
+      if (question) {
+        // Ambiguous — surface the clarifying question
+        responseText = `${interpretation}\n\n${question}`;
+        // No pending action yet; user needs to reply
+      } else {
+        // Clear enough — set up a pending action and ask to confirm
+        responseText = `${interpretation}\n\nShall I go ahead and apply this?`;
+        newPending = { instruction, summary: interpretation };
+      }
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : "Unknown error";
+      responseText = `I had trouble interpreting that (${errMsg}). Could you rephrase or give more detail?`;
+    }
+
+    setPendingAction(newPending);
+
+    setChatMessages((prev) =>
+      prev.map((m) =>
+        m.id === loadingId
+          ? {
+              ...m,
+              role: "assistant" as const,
+              text: responseText,
+              isLoading: false,
+            }
+          : m,
+      ),
+    );
+
+    setIsAiWorking(false);
+  }, [
+    artifact,
+    chatInput,
+    chatMessages,
+    content,
+    handleConfirmApply,
+    isAiWorking,
+    language,
+    pendingAction,
+    trainingContext,
   ]);
 
   const handleCancelPending = useCallback(() => {

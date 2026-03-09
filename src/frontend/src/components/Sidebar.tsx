@@ -15,7 +15,7 @@ import { useState } from "react";
 import { useActor } from "../hooks/useActor";
 import { useInternetIdentity } from "../hooks/useInternetIdentity";
 
-type Page = "dashboard" | "projects" | "new" | "detail" | "editor";
+type Page = "dashboard" | "projects" | "new" | "detail" | "editor" | "train";
 
 interface SidebarProps {
   currentPage: Page;
@@ -34,6 +34,12 @@ const NAV_ITEMS = [
     label: "My Projects",
     icon: FolderOpen,
     ocid: "sidebar.projects.link",
+  },
+  {
+    id: "train" as Page,
+    label: "Global Training",
+    icon: Brain,
+    ocid: "sidebar.train.link",
   },
 ];
 

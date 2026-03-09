@@ -287,6 +287,7 @@ async function callFreeAIForClarification(
   instruction: string,
   recentHistory: { role: "user" | "assistant"; content: string }[],
   trainingContext?: string,
+  refImages?: { id: string; name: string; dataUrl: string }[],
 ): Promise<{ interpretation: string; question: string | null }> {
   const systemPrompt = [
     "You are a code editor assistant. Your job is to interpret what the user wants and ask one short clarifying question if needed before making any changes.",
@@ -319,6 +320,20 @@ async function callFreeAIForClarification(
           content: `Language: ${language}\n\nCurrent code (first 800 chars):\n${currentContent.slice(0, 800)}`,
         },
         ...historyMessages,
+        ...(refImages && refImages.length > 0
+          ? [
+              {
+                role: "user" as const,
+                content: [
+                  { type: "text", text: "Reference images for context:" },
+                  ...refImages.map((img) => ({
+                    type: "image_url",
+                    image_url: { url: img.dataUrl },
+                  })),
+                ],
+              },
+            ]
+          : []),
         {
           role: "user",
           content: `New instruction: ${instruction}`,
@@ -356,6 +371,7 @@ async function callFreeAIApply(
   instruction: string,
   recentHistory: { role: "user" | "assistant"; content: string }[],
   trainingContext?: string,
+  refImages?: { id: string; name: string; dataUrl: string }[],
 ): Promise<string> {
   const systemPrompt = [
     "You are a code editor assistant. The user will provide code and an instruction. Return ONLY the complete modified code with no explanation, no markdown code fences, no commentary. Just output the raw code.",
@@ -384,6 +400,20 @@ async function callFreeAIApply(
           content: `Language: ${language}\n\nCurrent code:\n${currentContent}`,
         },
         ...historyMessages,
+        ...(refImages && refImages.length > 0
+          ? [
+              {
+                role: "user" as const,
+                content: [
+                  { type: "text", text: "Reference images for context:" },
+                  ...refImages.map((img) => ({
+                    type: "image_url",
+                    image_url: { url: img.dataUrl },
+                  })),
+                ],
+              },
+            ]
+          : []),
         {
           role: "user",
           content: `Apply this instruction now: ${instruction}`,
@@ -594,6 +624,9 @@ export default function CodeEditorPage({
 
   // AI training context (loaded from localStorage)
   const [trainingContext, setTrainingContext] = useState("");
+  const [globalTrainingContext] = useState<string>(
+    () => localStorage.getItem("ai-global-training") ?? "",
+  );
 
   useEffect(() => {
     const stored = localStorage.getItem(`ai-training-${projectId.toString()}`);
@@ -770,12 +803,16 @@ export default function CodeEditorPage({
 
     try {
       const recentHistory = buildRecentHistory(chatMessages);
+      const combinedTrainingApply = [globalTrainingContext, trainingContext]
+        .filter(Boolean)
+        .join("\n\n");
       newContent = await callFreeAIApply(
         content,
         language,
         pendingAction.instruction,
         recentHistory,
-        trainingContext || undefined,
+        combinedTrainingApply || undefined,
+        refImages.length > 0 ? refImages : undefined,
       );
       resultText = "Done! Changes applied. Don't forget to save.";
     } catch (err) {
@@ -819,6 +856,8 @@ export default function CodeEditorPage({
     language,
     pendingAction,
     trainingContext,
+    globalTrainingContext,
+    refImages,
     addRevision,
   ]);
 
@@ -891,12 +930,16 @@ export default function CodeEditorPage({
 
     try {
       const recentHistory = buildRecentHistory(chatMessages);
+      const combinedTrainingClarify = [globalTrainingContext, trainingContext]
+        .filter(Boolean)
+        .join("\n\n");
       const { interpretation, question } = await callFreeAIForClarification(
         content,
         language,
         instruction,
         recentHistory,
-        trainingContext || undefined,
+        combinedTrainingClarify || undefined,
+        refImages.length > 0 ? refImages : undefined,
       );
 
       if (question) {
@@ -939,6 +982,8 @@ export default function CodeEditorPage({
     language,
     pendingAction,
     trainingContext,
+    globalTrainingContext,
+    refImages,
   ]);
 
   const handleCancelPending = useCallback(() => {

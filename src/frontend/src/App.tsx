@@ -9,11 +9,12 @@ import { useSeedData } from "./hooks/useSeedData";
 import CodeEditorPage from "./pages/CodeEditorPage";
 import CreateProjectPage from "./pages/CreateProjectPage";
 import DashboardPage from "./pages/DashboardPage";
+import GlobalTrainingPage from "./pages/GlobalTrainingPage";
 import ProjectDetailPage from "./pages/ProjectDetailPage";
 import ProjectsPage from "./pages/ProjectsPage";
 import PublicArtifactPage from "./pages/PublicArtifactPage";
 
-type Page = "dashboard" | "projects" | "new" | "detail" | "editor";
+type Page = "dashboard" | "projects" | "new" | "detail" | "editor" | "train";
 
 interface NavState {
   page: Page;
@@ -140,6 +141,7 @@ export default function App() {
           {nav.page === "dashboard" && <DashboardPage onNavigate={navigate} />}
           {nav.page === "projects" && <ProjectsPage onNavigate={navigate} />}
           {nav.page === "new" && <CreateProjectPage onNavigate={navigate} />}
+          {nav.page === "train" && <GlobalTrainingPage />}
           {nav.page === "detail" && nav.projectId !== undefined && (
             <ProjectDetailPage
               projectId={nav.projectId}

@@ -1,4 +1,9 @@
 import { Button } from "@/components/ui/button";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -6,6 +11,9 @@ import { cn } from "@/lib/utils";
 import {
   AlertTriangle,
   ArrowLeft,
+  ChevronDown,
+  ChevronUp,
+  LayoutTemplate,
   Loader2,
   RefreshCw,
   Sparkles,
@@ -17,10 +25,12 @@ import { useActor } from "../hooks/useActor";
 import { useActorStatus } from "../hooks/useActorStatus";
 import { useEnsureRegistered } from "../hooks/useEnsureRegistered";
 import { useCreateProject } from "../hooks/useQueries";
+import { listTemplates } from "../lib/customTemplates";
+import type { CustomTemplate } from "../lib/customTemplates";
 import { CATEGORY_OPTIONS, makeCategoryFromKind } from "../lib/projectUtils";
 import type { CategoryKind } from "../lib/projectUtils";
 
-type Page = "dashboard" | "projects" | "new" | "detail";
+type Page = "dashboard" | "projects" | "new" | "detail" | "templates";
 
 interface CreateProjectPageProps {
   onNavigate: (page: Page, id?: bigint) => void;
@@ -36,6 +46,10 @@ export default function CreateProjectPage({
   const [otherLabel, setOtherLabel] = useState("");
   const [description, setDescription] = useState("");
   const [showSlowWarning, setShowSlowWarning] = useState(false);
+  const [selectedTemplate, setSelectedTemplate] =
+    useState<CustomTemplate | null>(null);
+  const [templatePanelOpen, setTemplatePanelOpen] = useState(false);
+  const [savedTemplates] = useState<CustomTemplate[]>(() => listTemplates());
 
   const createProject = useCreateProject();
   const { actor, isFetching: actorLoading } = useActor();
@@ -44,7 +58,6 @@ export default function CreateProjectPage({
 
   const isReady = !!actor && !actorLoading && isRegistered;
 
-  // Start a timer; if actor isn't ready after SLOW_CONNECTION_TIMEOUT_MS, surface a warning
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
@@ -93,6 +106,16 @@ export default function CreateProjectPage({
         return;
       }
       toast.success("Project created!");
+      // Store the pending template so the editor can pick it up
+      if (selectedTemplate) {
+        sessionStorage.setItem(
+          "pendingTemplate",
+          JSON.stringify({
+            code: selectedTemplate.code,
+            name: selectedTemplate.name,
+          }),
+        );
+      }
       onNavigate("detail", project.id);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -109,6 +132,9 @@ export default function CreateProjectPage({
       }
     }
   };
+
+  const categoryIcon = (kind: string) =>
+    CATEGORY_OPTIONS.find((o) => o.value === kind)?.icon ?? "✨";
 
   const showConnectionBanner = actorError || showSlowWarning;
 
@@ -288,6 +314,97 @@ export default function CreateProjectPage({
               data-ocid="new_project.description.textarea"
             />
           </div>
+
+          {/* Custom Template Picker */}
+          {savedTemplates.length > 0 && (
+            <Collapsible
+              open={templatePanelOpen}
+              onOpenChange={setTemplatePanelOpen}
+            >
+              <CollapsibleTrigger asChild>
+                <button
+                  type="button"
+                  data-ocid="new_project.templates.toggle"
+                  className="w-full flex items-center justify-between px-4 py-3 rounded-xl border border-border bg-card hover:bg-accent/40 transition-colors text-sm"
+                >
+                  <div className="flex items-center gap-2">
+                    <LayoutTemplate className="w-4 h-4 text-muted-foreground" />
+                    <span className="font-medium text-foreground">
+                      Start from a custom template
+                    </span>
+                    {selectedTemplate && (
+                      <span className="ml-1 bg-primary/20 text-primary text-[10px] px-1.5 py-0.5 rounded-full font-semibold">
+                        {selectedTemplate.name}
+                      </span>
+                    )}
+                    <span className="text-muted-foreground text-xs">
+                      (optional)
+                    </span>
+                  </div>
+                  {templatePanelOpen ? (
+                    <ChevronUp className="w-4 h-4 text-muted-foreground" />
+                  ) : (
+                    <ChevronDown className="w-4 h-4 text-muted-foreground" />
+                  )}
+                </button>
+              </CollapsibleTrigger>
+              <CollapsibleContent>
+                <motion.div
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-2"
+                >
+                  {savedTemplates.map((tpl, idx) => (
+                    <button
+                      key={tpl.id}
+                      type="button"
+                      data-ocid={`new_project.template.item.${idx + 1}`}
+                      onClick={() =>
+                        setSelectedTemplate(
+                          selectedTemplate?.id === tpl.id ? null : tpl,
+                        )
+                      }
+                      className={cn(
+                        "flex items-start gap-3 p-3 rounded-xl border text-left transition-all",
+                        selectedTemplate?.id === tpl.id
+                          ? "border-primary/60 bg-primary/10"
+                          : "border-border bg-card hover:border-border/80 hover:bg-accent/50",
+                      )}
+                    >
+                      <span className="text-xl leading-none mt-0.5">
+                        {categoryIcon(tpl.category)}
+                      </span>
+                      <div className="flex-1 min-w-0">
+                        <p
+                          className={cn(
+                            "text-sm font-semibold truncate",
+                            selectedTemplate?.id === tpl.id
+                              ? "text-primary"
+                              : "text-foreground",
+                          )}
+                        >
+                          {tpl.name}
+                        </p>
+                        {tpl.description && (
+                          <p className="text-xs text-muted-foreground line-clamp-2 mt-0.5">
+                            {tpl.description}
+                          </p>
+                        )}
+                      </div>
+                      {selectedTemplate?.id === tpl.id && (
+                        <div className="w-1.5 h-1.5 rounded-full bg-primary mt-1.5 flex-shrink-0" />
+                      )}
+                    </button>
+                  ))}
+                </motion.div>
+                {selectedTemplate && (
+                  <p className="text-xs text-muted-foreground/60 mt-2 text-center">
+                    Template code will be attached to the new project
+                  </p>
+                )}
+              </CollapsibleContent>
+            </Collapsible>
+          )}
 
           {/* Submit */}
           <div className="flex items-center gap-3 pt-2">

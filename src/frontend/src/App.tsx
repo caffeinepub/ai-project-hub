@@ -13,8 +13,16 @@ import GlobalTrainingPage from "./pages/GlobalTrainingPage";
 import ProjectDetailPage from "./pages/ProjectDetailPage";
 import ProjectsPage from "./pages/ProjectsPage";
 import PublicArtifactPage from "./pages/PublicArtifactPage";
+import TemplateStudioPage from "./pages/TemplateStudioPage";
 
-type Page = "dashboard" | "projects" | "new" | "detail" | "editor" | "train";
+type Page =
+  | "dashboard"
+  | "projects"
+  | "new"
+  | "detail"
+  | "editor"
+  | "train"
+  | "templates";
 
 interface NavState {
   page: Page;
@@ -59,6 +67,8 @@ export default function App() {
       document.title = "New Project — AI Project Hub";
     else if (nav.page === "editor")
       document.title = "Code Editor — AI Project Hub";
+    else if (nav.page === "templates")
+      document.title = "Template Studio — AI Project Hub";
   }, [nav.page]);
 
   // ── Public artifact route (no auth required) ─────────────────
@@ -142,6 +152,7 @@ export default function App() {
           {nav.page === "projects" && <ProjectsPage onNavigate={navigate} />}
           {nav.page === "new" && <CreateProjectPage onNavigate={navigate} />}
           {nav.page === "train" && <GlobalTrainingPage />}
+          {nav.page === "templates" && <TemplateStudioPage />}
           {nav.page === "detail" && nav.projectId !== undefined && (
             <ProjectDetailPage
               projectId={nav.projectId}

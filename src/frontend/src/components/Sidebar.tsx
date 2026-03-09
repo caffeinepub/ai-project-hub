@@ -4,6 +4,7 @@ import {
   Brain,
   FolderOpen,
   LayoutDashboard,
+  LayoutTemplate,
   Loader2,
   LogOut,
   Menu,
@@ -15,7 +16,14 @@ import { useState } from "react";
 import { useActor } from "../hooks/useActor";
 import { useInternetIdentity } from "../hooks/useInternetIdentity";
 
-type Page = "dashboard" | "projects" | "new" | "detail" | "editor" | "train";
+type Page =
+  | "dashboard"
+  | "projects"
+  | "new"
+  | "detail"
+  | "editor"
+  | "train"
+  | "templates";
 
 interface SidebarProps {
   currentPage: Page;
@@ -34,6 +42,12 @@ const NAV_ITEMS = [
     label: "My Projects",
     icon: FolderOpen,
     ocid: "sidebar.projects.link",
+  },
+  {
+    id: "templates" as Page,
+    label: "Template Studio",
+    icon: LayoutTemplate,
+    ocid: "sidebar.templates.link",
   },
   {
     id: "train" as Page,

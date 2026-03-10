@@ -121,7 +121,7 @@ Keep responses conversational and focused. Only generate code when you have enou
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          model: "openai",
+          model: "openai-large",
           messages: [
             { role: "system", content: systemPrompt },
             ...historyMessages,

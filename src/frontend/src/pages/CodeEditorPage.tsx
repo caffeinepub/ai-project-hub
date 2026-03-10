@@ -312,7 +312,7 @@ async function callFreeAIForClarification(
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      model: "openai",
+      model: refImages && refImages.length > 0 ? "openai-large" : "openai",
       messages: [
         { role: "system", content: systemPrompt },
         {
@@ -392,7 +392,7 @@ async function callFreeAIApply(
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      model: "openai",
+      model: refImages && refImages.length > 0 ? "openai-large" : "openai",
       messages: [
         { role: "system", content: systemPrompt },
         {

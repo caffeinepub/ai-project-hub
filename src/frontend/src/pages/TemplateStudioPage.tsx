@@ -4,7 +4,7 @@ import { Label } from "@/components/ui/label";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
-import { compressImageDataUrl } from "@/utils/compressImage";
+import { callAIWithImages } from "@/utils/aiService";
 import {
   ChevronDown,
   ChevronUp,
@@ -64,94 +64,44 @@ function extractTemplateName(text: string): string {
   return "";
 }
 
-const RETRY_DELAYS = [500, 1000, 2000];
-const TIMEOUT_MS = 30_000;
-
 async function callTemplateAI(messages: Message[]): Promise<string> {
-  const systemPrompt = `You are a Template Studio AI assistant. Your job is to help users create custom starter HTML templates through conversation.
+  const backtick = "`";
+  const systemPrompt = [
+    "You are a Template Studio AI assistant. Your job is to help users create custom starter HTML templates through conversation.",
+    "",
+    "Conversation flow:",
+    "1. Ask clarifying questions about: purpose, layout, color scheme, features, tech (vanilla JS only), content sections, and visual style.",
+    "2. If the user provides a reference image, study it carefully and replicate its layout, color palette, typography style, and key visual elements in the generated template.",
+    "3. Be thorough — ask 3-5 clarifying questions across the conversation before generating code.",
+    "4. When you have enough information, generate a COMPLETE, self-contained HTML file with:",
+    "   - Inline CSS (style tag in head)",
+    "   - Vanilla JavaScript only (no external libs unless CDN is essential)",
+    "   - Realistic placeholder content",
+    "   - Professional, polished design",
+    "   - Mobile responsive",
+    `   - Put the full HTML code inside triple backticks with html language tag: ${backtick}${backtick}${backtick}html ... ${backtick}${backtick}${backtick}`,
+    '5. Before the code block, briefly describe what you built and suggest a short template name like: Template name: "My Template Name"',
+    "",
+    "Keep responses conversational and focused. Only generate code when you have enough details.",
+  ].join("\n");
 
-Conversation flow:
-1. Ask clarifying questions about: purpose, layout, color scheme, features, tech (vanilla JS only), content sections, and visual style.
-2. If the user provides a reference image, study it carefully and replicate its layout, color palette, typography style, and key visual elements in the generated template.
-3. Be thorough — ask 3-5 clarifying questions across the conversation before generating code.
-4. When you have enough information, generate a COMPLETE, self-contained HTML file with:
-   - Inline CSS (style tag in head)
-   - Vanilla JavaScript only (no external libs unless CDN is essential)
-   - Realistic placeholder content
-   - Professional, polished design
-   - Mobile responsive
-   - Put the full HTML code inside triple backticks with html language tag: \`\`\`html ... \`\`\`
-5. Before the code block, briefly describe what you built and suggest a short template name like: Template name: "My Template Name"
+  // Extract reference image from last message if any
+  const lastMsg = messages[messages.length - 1];
+  const refImages = lastMsg?.imageDataUrl
+    ? [{ dataUrl: lastMsg.imageDataUrl }]
+    : undefined;
 
-Keep responses conversational and focused. Only generate code when you have enough details.`;
-
-  const compressedMessages = await Promise.all(
-    messages.map(async (m) =>
-      m.imageDataUrl
-        ? { ...m, imageDataUrl: await compressImageDataUrl(m.imageDataUrl) }
-        : m,
-    ),
-  );
-
-  const historyMessages = compressedMessages.map((m) => {
-    if (m.imageDataUrl) {
-      return {
+  const baseMessages = [
+    { role: "system" as const, content: systemPrompt },
+    ...messages
+      .filter((m) => !m.isError)
+      .map((m) => ({
         role: m.role as "user" | "assistant",
-        content: [
-          { type: "text", text: m.text || "Here is my reference image." },
-          {
-            type: "image_url",
-            image_url: { url: m.imageDataUrl },
-          },
-        ],
-      };
-    }
-    return {
-      role: m.role as "user" | "assistant",
-      content: m.text,
-    };
-  });
+        content: m.text || "Here is my reference image.",
+      })),
+  ];
 
-  let lastError: Error = new Error("Unknown error");
-
-  for (let attempt = 0; attempt <= RETRY_DELAYS.length; attempt++) {
-    // Wait before retrying (skip wait on first attempt)
-    if (attempt > 0) {
-      await new Promise((resolve) =>
-        setTimeout(resolve, RETRY_DELAYS[attempt - 1]),
-      );
-    }
-
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), TIMEOUT_MS);
-    try {
-      const response = await fetch("https://text.pollinations.ai/", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        signal: controller.signal,
-        body: JSON.stringify({
-          model: "openai-large",
-          messages: [
-            { role: "system", content: systemPrompt },
-            ...historyMessages,
-          ],
-          seed: 42,
-          private: true,
-        }),
-      });
-      clearTimeout(timeoutId);
-      if (!response.ok) throw new Error(`AI error ${response.status}`);
-      return await response.text();
-    } catch (err) {
-      clearTimeout(timeoutId);
-      lastError = err instanceof Error ? err : new Error(String(err));
-      if (err instanceof Error && err.name === "AbortError") {
-        lastError = new Error("AI service timed out. Please try again.");
-      }
-    }
-  }
-
-  throw lastError;
+  return callAIWithImages(baseMessages, refImages);
 }
 
 export default function TemplateStudioPage() {

@@ -12,6 +12,7 @@ import {
   ImagePlus,
   LayoutTemplate,
   Loader2,
+  RefreshCw,
   Send,
   Sparkles,
   Trash2,
@@ -35,6 +36,7 @@ interface Message {
   role: "user" | "assistant";
   text: string;
   imageDataUrl?: string;
+  isError?: boolean;
 }
 
 interface ReferenceImage {
@@ -60,6 +62,9 @@ function extractTemplateName(text: string): string {
   if (nameMatch) return nameMatch[1];
   return "";
 }
+
+const RETRY_DELAYS = [500, 1000, 2000];
+const TIMEOUT_MS = 30_000;
 
 async function callTemplateAI(messages: Message[]): Promise<string> {
   const systemPrompt = `You are a Template Studio AI assistant. Your job is to help users create custom starter HTML templates through conversation.
@@ -98,19 +103,47 @@ Keep responses conversational and focused. Only generate code when you have enou
     };
   });
 
-  const response = await fetch("https://text.pollinations.ai/", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      model: "openai",
-      messages: [{ role: "system", content: systemPrompt }, ...historyMessages],
-      seed: 42,
-      private: true,
-    }),
-  });
+  let lastError: Error = new Error("Unknown error");
 
-  if (!response.ok) throw new Error(`AI error ${response.status}`);
-  return await response.text();
+  for (let attempt = 0; attempt <= RETRY_DELAYS.length; attempt++) {
+    // Wait before retrying (skip wait on first attempt)
+    if (attempt > 0) {
+      await new Promise((resolve) =>
+        setTimeout(resolve, RETRY_DELAYS[attempt - 1]),
+      );
+    }
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), TIMEOUT_MS);
+
+    try {
+      const response = await fetch("https://text.pollinations.ai/", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: "openai",
+          messages: [
+            { role: "system", content: systemPrompt },
+            ...historyMessages,
+          ],
+          seed: 42,
+          private: true,
+        }),
+        signal: controller.signal,
+      });
+
+      clearTimeout(timeoutId);
+
+      if (!response.ok) throw new Error(`AI error ${response.status}`);
+      return await response.text();
+    } catch (err) {
+      clearTimeout(timeoutId);
+      lastError = err instanceof Error ? err : new Error(String(err));
+      // If aborted due to timeout, surface a clearer message but still retry
+    }
+  }
+
+  throw lastError;
 }
 
 export default function TemplateStudioPage() {
@@ -132,6 +165,7 @@ export default function TemplateStudioPage() {
   const [referenceImage, setReferenceImage] = useState<ReferenceImage | null>(
     null,
   );
+  const [lastUserMessage, setLastUserMessage] = useState<Message | null>(null);
 
   const bottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -166,23 +200,42 @@ export default function TemplateStudioPage() {
     e.target.value = "";
   };
 
-  const handleSend = async () => {
-    const text = input.trim();
-    if ((!text && !referenceImage) || isLoading) return;
+  const handleSend = async (overrideMsg?: Message) => {
+    // If called with an override message (retry), use it; otherwise build from current input
+    let userMsg: Message;
+    let updated: Message[];
+
+    if (overrideMsg) {
+      // Remove the previous error message from the end before retrying
+      userMsg = { ...overrideMsg, id: `u-${Date.now()}` };
+      setMessages((prev) => {
+        const withoutError = prev.filter((m) => !m.isError);
+        updated = [...withoutError, userMsg];
+        return updated;
+      });
+      // Give state a tick to update before reading
+      updated = messages.filter((m) => !m.isError).concat(userMsg);
+    } else {
+      const text = input.trim();
+      if ((!text && !referenceImage) || isLoading) return;
+
+      userMsg = {
+        id: `u-${Date.now()}`,
+        role: "user",
+        text: text || (referenceImage ? "Here is my reference image." : ""),
+        imageDataUrl: referenceImage?.dataUrl,
+      };
+      updated = [...messages, userMsg];
+      setMessages(updated);
+      setInput("");
+      setReferenceImage(null);
+    }
+
+    // Track the last user message for retry
+    setLastUserMessage(userMsg);
 
     // Reset scroll flag so the user's message and AI thinking indicator are visible
     userScrolledUp.current = false;
-
-    const userMsg: Message = {
-      id: `u-${Date.now()}`,
-      role: "user",
-      text: text || (referenceImage ? "Here is my reference image." : ""),
-      imageDataUrl: referenceImage?.dataUrl,
-    };
-    const updated = [...messages, userMsg];
-    setMessages(updated);
-    setInput("");
-    setReferenceImage(null);
     setIsLoading(true);
 
     try {
@@ -192,7 +245,7 @@ export default function TemplateStudioPage() {
         role: "assistant",
         text: reply,
       };
-      setMessages((prev) => [...prev, aiMsg]);
+      setMessages((prev) => [...prev.filter((m) => !m.isError), aiMsg]);
 
       const code = extractCodeBlock(reply);
       if (code) {
@@ -204,7 +257,8 @@ export default function TemplateStudioPage() {
       const errMsg: Message = {
         id: `e-${Date.now()}`,
         role: "assistant",
-        text: "I had trouble connecting. Please try again.",
+        text: "I had trouble connecting to the AI service. Check your internet connection and try again.",
+        isError: true,
       };
       setMessages((prev) => [...prev, errMsg]);
     } finally {
@@ -422,7 +476,9 @@ export default function TemplateStudioPage() {
                         "max-w-[80%] px-4 py-3 rounded-2xl text-sm leading-relaxed whitespace-pre-wrap",
                         msg.role === "user"
                           ? "bg-primary text-primary-foreground rounded-br-sm"
-                          : "bg-card border border-border text-foreground rounded-bl-sm",
+                          : msg.isError
+                            ? "bg-destructive/10 border border-destructive/30 text-foreground rounded-bl-sm"
+                            : "bg-card border border-border text-foreground rounded-bl-sm",
                       )}
                     >
                       {msg.imageDataUrl && (
@@ -433,6 +489,21 @@ export default function TemplateStudioPage() {
                         />
                       )}
                       {msg.text && <span>{msg.text}</span>}
+                      {msg.isError && lastUserMessage && (
+                        <div className="mt-3 pt-2 border-t border-destructive/20">
+                          <Button
+                            data-ocid="template_studio.retry.button"
+                            variant="outline"
+                            size="sm"
+                            disabled={isLoading}
+                            onClick={() => handleSend(lastUserMessage)}
+                            className="h-7 text-xs gap-1.5 border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                          >
+                            <RefreshCw className="w-3 h-3" />
+                            Retry
+                          </Button>
+                        </div>
+                      )}
                     </div>
                   </motion.div>
                 ))}
@@ -542,7 +613,7 @@ export default function TemplateStudioPage() {
               />
               <Button
                 data-ocid="template_studio.send.button"
-                onClick={handleSend}
+                onClick={() => handleSend()}
                 disabled={!canSend}
                 size="icon"
                 className="h-[70px] w-10 flex-shrink-0"

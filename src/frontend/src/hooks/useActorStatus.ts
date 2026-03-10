@@ -3,8 +3,10 @@
  */
 import { useQueryClient } from "@tanstack/react-query";
 import { useCallback, useMemo } from "react";
-import { ACTOR_QUERY_KEY } from "./useActor";
 import { useInternetIdentity } from "./useInternetIdentity";
+
+// Must match the query key used in useActor.ts
+const ACTOR_QUERY_KEY = "actor";
 
 const ANON_PRINCIPAL = "__anon__";
 

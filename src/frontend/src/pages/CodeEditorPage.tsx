@@ -22,6 +22,7 @@ import {
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
+import { compressImageDataUrl } from "@/utils/compressImage";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   ArrowLeft,
@@ -280,6 +281,20 @@ function buildRecentHistory(
     .map((m) => ({ role: m.role as "user" | "assistant", content: m.text }));
 }
 
+/** Race a promise against a hard timeout. Always resolves/rejects within ms. */
+function withTimeout<T>(
+  promise: Promise<T>,
+  ms: number,
+  message = "AI service timed out. Please try again.",
+): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) =>
+      setTimeout(() => reject(new Error(message)), ms),
+    ),
+  ]);
+}
+
 // ── Pollinations AI API call — clarification mode ─────────────
 async function callFreeAIForClarification(
   currentContent: string,
@@ -308,60 +323,90 @@ async function callFreeAIForClarification(
     content: m.content,
   }));
 
-  const response = await fetch("https://text.pollinations.ai/", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      model: refImages && refImages.length > 0 ? "openai-large" : "openai",
-      messages: [
-        { role: "system", content: systemPrompt },
-        {
-          role: "user",
-          content: `Language: ${language}\n\nCurrent code (first 800 chars):\n${currentContent.slice(0, 800)}`,
-        },
-        ...historyMessages,
-        ...(refImages && refImages.length > 0
-          ? [
+  const compressedRefImages =
+    refImages && refImages.length > 0
+      ? await Promise.all(
+          refImages.map(async (img) => ({
+            ...img,
+            dataUrl: await compressImageDataUrl(img.dataUrl),
+          })),
+        )
+      : refImages;
+
+  const RETRY_DELAYS_CLAR = [500, 1500];
+  const TIMEOUT_MS_CLAR = 45_000;
+  let _lastErrorClar: Error = new Error(
+    "AI service timed out. Please try again.",
+  );
+  for (let attempt = 0; attempt <= RETRY_DELAYS_CLAR.length; attempt++) {
+    if (attempt > 0)
+      await new Promise((r) => setTimeout(r, RETRY_DELAYS_CLAR[attempt - 1]));
+    try {
+      const response = await withTimeout(
+        fetch("https://text.pollinations.ai/", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            model:
+              compressedRefImages && compressedRefImages.length > 0
+                ? "openai-large"
+                : "openai",
+            messages: [
+              { role: "system", content: systemPrompt },
               {
-                role: "user" as const,
-                content: [
-                  { type: "text", text: "Reference images for context:" },
-                  ...refImages.map((img) => ({
-                    type: "image_url",
-                    image_url: { url: img.dataUrl },
-                  })),
-                ],
+                role: "user",
+                content: `Language: ${language}\n\nCurrent code (first 800 chars):\n${currentContent.slice(0, 800)}`,
               },
-            ]
-          : []),
-        {
-          role: "user",
-          content: `New instruction: ${instruction}`,
-        },
-      ],
-      seed: 42,
-      private: true,
-    }),
-  });
+              ...historyMessages,
+              ...(compressedRefImages && compressedRefImages.length > 0
+                ? [
+                    {
+                      role: "user" as const,
+                      content: [
+                        { type: "text", text: "Reference images for context:" },
+                        ...compressedRefImages.map((img) => ({
+                          type: "image_url",
+                          image_url: { url: img.dataUrl },
+                        })),
+                      ],
+                    },
+                  ]
+                : []),
+              {
+                role: "user",
+                content: `New instruction: ${instruction}`,
+              },
+            ],
+            seed: 42,
+            private: true,
+          }),
+        }),
+        TIMEOUT_MS_CLAR,
+      );
 
-  if (!response.ok) throw new Error(`AI service error ${response.status}`);
+      if (!response.ok) throw new Error(`AI service error ${response.status}`);
 
-  const raw = await response.text();
-  // Extract JSON from the response
-  const jsonMatch = raw.match(/\{[\s\S]*\}/);
-  if (!jsonMatch) {
-    // Fallback: treat entire response as interpretation, no question
-    return { interpretation: raw.trim(), question: null };
+      const raw = await response.text();
+      // Extract JSON from the response
+      const jsonMatch = raw.match(/\{[\s\S]*\}/);
+      if (!jsonMatch) {
+        // Fallback: treat entire response as interpretation, no question
+        return { interpretation: raw.trim(), question: null };
+      }
+      try {
+        const parsed = JSON.parse(jsonMatch[0]);
+        return {
+          interpretation: parsed.interpretation ?? raw.trim(),
+          question: parsed.question ?? null,
+        };
+      } catch {
+        return { interpretation: raw.trim(), question: null };
+      }
+    } catch (err) {
+      _lastErrorClar = err instanceof Error ? err : new Error(String(err));
+    }
   }
-  try {
-    const parsed = JSON.parse(jsonMatch[0]);
-    return {
-      interpretation: parsed.interpretation ?? raw.trim(),
-      question: parsed.question ?? null,
-    };
-  } catch {
-    return { interpretation: raw.trim(), question: null };
-  }
+  throw new Error("AI service timed out. Please try again.");
 }
 
 // ── Pollinations AI API call — apply confirmed instruction ─────
@@ -388,53 +433,82 @@ async function callFreeAIApply(
     content: m.content,
   }));
 
-  const response = await fetch("https://text.pollinations.ai/", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      model: refImages && refImages.length > 0 ? "openai-large" : "openai",
-      messages: [
-        { role: "system", content: systemPrompt },
-        {
-          role: "user",
-          content: `Language: ${language}\n\nCurrent code:\n${currentContent}`,
-        },
-        ...historyMessages,
-        ...(refImages && refImages.length > 0
-          ? [
+  const compressedRefImages =
+    refImages && refImages.length > 0
+      ? await Promise.all(
+          refImages.map(async (img) => ({
+            ...img,
+            dataUrl: await compressImageDataUrl(img.dataUrl),
+          })),
+        )
+      : refImages;
+
+  const RETRY_DELAYS_APPLY = [500, 1500];
+  const TIMEOUT_MS_APPLY = 45_000;
+  for (let attempt = 0; attempt <= RETRY_DELAYS_APPLY.length; attempt++) {
+    if (attempt > 0)
+      await new Promise((r) => setTimeout(r, RETRY_DELAYS_APPLY[attempt - 1]));
+    try {
+      const response = await withTimeout(
+        fetch("https://text.pollinations.ai/", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            model:
+              compressedRefImages && compressedRefImages.length > 0
+                ? "openai-large"
+                : "openai",
+            messages: [
+              { role: "system", content: systemPrompt },
               {
-                role: "user" as const,
-                content: [
-                  { type: "text", text: "Reference images for context:" },
-                  ...refImages.map((img) => ({
-                    type: "image_url",
-                    image_url: { url: img.dataUrl },
-                  })),
-                ],
+                role: "user",
+                content: `Language: ${language}\n\nCurrent code:\n${currentContent}`,
               },
-            ]
-          : []),
-        {
-          role: "user",
-          content: `Apply this instruction now: ${instruction}`,
-        },
-      ],
-      seed: 42,
-      private: true,
-    }),
-  });
+              ...historyMessages,
+              ...(compressedRefImages && compressedRefImages.length > 0
+                ? [
+                    {
+                      role: "user" as const,
+                      content: [
+                        { type: "text", text: "Reference images for context:" },
+                        ...compressedRefImages.map((img) => ({
+                          type: "image_url",
+                          image_url: { url: img.dataUrl },
+                        })),
+                      ],
+                    },
+                  ]
+                : []),
+              {
+                role: "user",
+                content: `Apply this instruction now: ${instruction}`,
+              },
+            ],
+            seed: 42,
+            private: true,
+          }),
+        }),
+        TIMEOUT_MS_APPLY,
+      );
 
-  if (!response.ok) throw new Error(`AI service error ${response.status}`);
+      if (!response.ok) throw new Error(`AI service error ${response.status}`);
 
-  const raw = await response.text();
-  const stripped = raw
-    .split("\n")
-    .filter((line) => !line.startsWith("```"))
-    .join("\n")
-    .trim();
+      const raw = await response.text();
+      const stripped = raw
+        .split("\n")
+        .filter((line) => !line.startsWith("```"))
+        .join("\n")
+        .trim();
 
-  if (!stripped) throw new Error("Empty response from AI");
-  return stripped;
+      if (!stripped) throw new Error("Empty response from AI");
+      return stripped;
+    } catch (_err) {
+      if (attempt === RETRY_DELAYS_APPLY.length) {
+        throw new Error("AI service timed out. Please try again.");
+      }
+    }
+  }
+  throw new Error("AI service timed out. Please try again.");
 }
 
 // ── Markdown preview component ─────────────────────────────────
@@ -833,22 +907,22 @@ export default function CodeEditorPage({
       });
     } catch {
       // non-critical
+    } finally {
+      setChatMessages((prev) =>
+        prev.map((m) =>
+          m.id === applyingId
+            ? {
+                ...m,
+                role: "assistant" as const,
+                text: resultText,
+                isLoading: false,
+              }
+            : m,
+        ),
+      );
+
+      setIsAiWorking(false);
     }
-
-    setChatMessages((prev) =>
-      prev.map((m) =>
-        m.id === applyingId
-          ? {
-              ...m,
-              role: "assistant" as const,
-              text: resultText,
-              isLoading: false,
-            }
-          : m,
-      ),
-    );
-
-    setIsAiWorking(false);
   }, [
     artifact,
     chatMessages,
@@ -954,24 +1028,24 @@ export default function CodeEditorPage({
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : "Unknown error";
       responseText = `I had trouble interpreting that (${errMsg}). Could you rephrase or give more detail?`;
+    } finally {
+      setPendingAction(newPending);
+
+      setChatMessages((prev) =>
+        prev.map((m) =>
+          m.id === loadingId
+            ? {
+                ...m,
+                role: "assistant" as const,
+                text: responseText,
+                isLoading: false,
+              }
+            : m,
+        ),
+      );
+
+      setIsAiWorking(false);
     }
-
-    setPendingAction(newPending);
-
-    setChatMessages((prev) =>
-      prev.map((m) =>
-        m.id === loadingId
-          ? {
-              ...m,
-              role: "assistant" as const,
-              text: responseText,
-              isLoading: false,
-            }
-          : m,
-      ),
-    );
-
-    setIsAiWorking(false);
   }, [
     artifact,
     chatInput,

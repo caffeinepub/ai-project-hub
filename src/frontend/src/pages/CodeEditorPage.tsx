@@ -281,20 +281,6 @@ function buildRecentHistory(
     .map((m) => ({ role: m.role as "user" | "assistant", content: m.text }));
 }
 
-/** Race a promise against a hard timeout. Always resolves/rejects within ms. */
-function withTimeout<T>(
-  promise: Promise<T>,
-  ms: number,
-  message = "AI service timed out. Please try again.",
-): Promise<T> {
-  return Promise.race([
-    promise,
-    new Promise<T>((_, reject) =>
-      setTimeout(() => reject(new Error(message)), ms),
-    ),
-  ]);
-}
-
 // ── Pollinations AI API call — clarification mode ─────────────
 async function callFreeAIForClarification(
   currentContent: string,
@@ -341,69 +327,76 @@ async function callFreeAIForClarification(
   for (let attempt = 0; attempt <= RETRY_DELAYS_CLAR.length; attempt++) {
     if (attempt > 0)
       await new Promise((r) => setTimeout(r, RETRY_DELAYS_CLAR[attempt - 1]));
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), TIMEOUT_MS_CLAR);
+    let response: Response;
     try {
-      const response = await withTimeout(
-        fetch("https://text.pollinations.ai/", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            model:
-              compressedRefImages && compressedRefImages.length > 0
-                ? "openai-large"
-                : "openai",
-            messages: [
-              { role: "system", content: systemPrompt },
-              {
-                role: "user",
-                content: `Language: ${language}\n\nCurrent code (first 800 chars):\n${currentContent.slice(0, 800)}`,
-              },
-              ...historyMessages,
-              ...(compressedRefImages && compressedRefImages.length > 0
-                ? [
-                    {
-                      role: "user" as const,
-                      content: [
-                        { type: "text", text: "Reference images for context:" },
-                        ...compressedRefImages.map((img) => ({
-                          type: "image_url",
-                          image_url: { url: img.dataUrl },
-                        })),
-                      ],
-                    },
-                  ]
-                : []),
-              {
-                role: "user",
-                content: `New instruction: ${instruction}`,
-              },
-            ],
-            seed: 42,
-            private: true,
-          }),
+      response = await fetch("https://text.pollinations.ai/", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        signal: controller.signal,
+        body: JSON.stringify({
+          model:
+            compressedRefImages && compressedRefImages.length > 0
+              ? "openai-large"
+              : "openai",
+          messages: [
+            { role: "system", content: systemPrompt },
+            {
+              role: "user",
+              content: `Language: ${language}\n\nCurrent code (first 800 chars):\n${currentContent.slice(0, 800)}`,
+            },
+            ...historyMessages,
+            ...(compressedRefImages && compressedRefImages.length > 0
+              ? [
+                  {
+                    role: "user" as const,
+                    content: [
+                      { type: "text", text: "Reference images for context:" },
+                      ...compressedRefImages.map((img) => ({
+                        type: "image_url",
+                        image_url: { url: img.dataUrl },
+                      })),
+                    ],
+                  },
+                ]
+              : []),
+            {
+              role: "user",
+              content: `New instruction: ${instruction}`,
+            },
+          ],
+          seed: 42,
+          private: true,
         }),
-        TIMEOUT_MS_CLAR,
-      );
-
-      if (!response.ok) throw new Error(`AI service error ${response.status}`);
-
-      const raw = await response.text();
-      // Extract JSON from the response
-      const jsonMatch = raw.match(/\{[\s\S]*\}/);
-      if (!jsonMatch) {
-        // Fallback: treat entire response as interpretation, no question
-        return { interpretation: raw.trim(), question: null };
-      }
-      try {
-        const parsed = JSON.parse(jsonMatch[0]);
-        return {
-          interpretation: parsed.interpretation ?? raw.trim(),
-          question: parsed.question ?? null,
-        };
-      } catch {
-        return { interpretation: raw.trim(), question: null };
-      }
+      });
+      clearTimeout(timeoutId);
     } catch (err) {
+      clearTimeout(timeoutId);
       _lastErrorClar = err instanceof Error ? err : new Error(String(err));
+      if (err instanceof Error && err.name === "AbortError") {
+        _lastErrorClar = new Error("AI service timed out. Please try again.");
+      }
+      continue;
+    }
+
+    if (!response.ok) throw new Error(`AI service error ${response.status}`);
+
+    const raw = await response.text();
+    // Extract JSON from the response
+    const jsonMatch = raw.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) {
+      // Fallback: treat entire response as interpretation, no question
+      return { interpretation: raw.trim(), question: null };
+    }
+    try {
+      const parsed = JSON.parse(jsonMatch[0]);
+      return {
+        interpretation: parsed.interpretation ?? raw.trim(),
+        question: parsed.question ?? null,
+      };
+    } catch {
+      return { interpretation: raw.trim(), question: null };
     }
   }
   throw new Error("AI service timed out. Please try again.");
@@ -448,48 +441,49 @@ async function callFreeAIApply(
   for (let attempt = 0; attempt <= RETRY_DELAYS_APPLY.length; attempt++) {
     if (attempt > 0)
       await new Promise((r) => setTimeout(r, RETRY_DELAYS_APPLY[attempt - 1]));
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), TIMEOUT_MS_APPLY);
     try {
-      const response = await withTimeout(
-        fetch("https://text.pollinations.ai/", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            model:
-              compressedRefImages && compressedRefImages.length > 0
-                ? "openai-large"
-                : "openai",
-            messages: [
-              { role: "system", content: systemPrompt },
-              {
-                role: "user",
-                content: `Language: ${language}\n\nCurrent code:\n${currentContent}`,
-              },
-              ...historyMessages,
-              ...(compressedRefImages && compressedRefImages.length > 0
-                ? [
-                    {
-                      role: "user" as const,
-                      content: [
-                        { type: "text", text: "Reference images for context:" },
-                        ...compressedRefImages.map((img) => ({
-                          type: "image_url",
-                          image_url: { url: img.dataUrl },
-                        })),
-                      ],
-                    },
-                  ]
-                : []),
-              {
-                role: "user",
-                content: `Apply this instruction now: ${instruction}`,
-              },
-            ],
-            seed: 42,
-            private: true,
-          }),
+      const response = await fetch("https://text.pollinations.ai/", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        signal: controller.signal,
+        body: JSON.stringify({
+          model:
+            compressedRefImages && compressedRefImages.length > 0
+              ? "openai-large"
+              : "openai",
+          messages: [
+            { role: "system", content: systemPrompt },
+            {
+              role: "user",
+              content: `Language: ${language}\n\nCurrent code:\n${currentContent}`,
+            },
+            ...historyMessages,
+            ...(compressedRefImages && compressedRefImages.length > 0
+              ? [
+                  {
+                    role: "user" as const,
+                    content: [
+                      { type: "text", text: "Reference images for context:" },
+                      ...compressedRefImages.map((img) => ({
+                        type: "image_url",
+                        image_url: { url: img.dataUrl },
+                      })),
+                    ],
+                  },
+                ]
+              : []),
+            {
+              role: "user",
+              content: `Apply this instruction now: ${instruction}`,
+            },
+          ],
+          seed: 42,
+          private: true,
         }),
-        TIMEOUT_MS_APPLY,
-      );
+      });
+      clearTimeout(timeoutId);
 
       if (!response.ok) throw new Error(`AI service error ${response.status}`);
 
@@ -502,9 +496,16 @@ async function callFreeAIApply(
 
       if (!stripped) throw new Error("Empty response from AI");
       return stripped;
-    } catch (_err) {
-      if (attempt === RETRY_DELAYS_APPLY.length) {
-        throw new Error("AI service timed out. Please try again.");
+    } catch (err) {
+      clearTimeout(timeoutId);
+      if (err instanceof Error && err.name === "AbortError") {
+        if (attempt === RETRY_DELAYS_APPLY.length) {
+          throw new Error("AI service timed out. Please try again.");
+        }
+      } else {
+        if (attempt === RETRY_DELAYS_APPLY.length) {
+          throw new Error("AI service timed out. Please try again.");
+        }
       }
     }
   }

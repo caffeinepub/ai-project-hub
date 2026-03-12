@@ -1,9 +1,4 @@
 import { Button } from "@/components/ui/button";
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "@/components/ui/collapsible";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -11,12 +6,11 @@ import { cn } from "@/lib/utils";
 import {
   AlertTriangle,
   ArrowLeft,
-  ChevronDown,
-  ChevronUp,
-  LayoutTemplate,
+  Code2,
   Loader2,
   RefreshCw,
   Sparkles,
+  X,
 } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useRef, useState } from "react";
@@ -26,6 +20,8 @@ import { useActorStatus } from "../hooks/useActorStatus";
 import { useCreateProject } from "../hooks/useQueries";
 import { listTemplates } from "../lib/customTemplates";
 import type { CustomTemplate } from "../lib/customTemplates";
+import { PRESET_TEMPLATES } from "../lib/presetTemplates";
+import type { PresetTemplate } from "../lib/presetTemplates";
 import { CATEGORY_OPTIONS, makeCategoryFromKind } from "../lib/projectUtils";
 import type { CategoryKind } from "../lib/projectUtils";
 import { getSecretParameter } from "../utils/urlParams";
@@ -35,6 +31,14 @@ type Page = "dashboard" | "projects" | "new" | "detail" | "templates";
 interface CreateProjectPageProps {
   onNavigate: (page: Page, id?: bigint) => void;
 }
+
+type AnyTemplate = {
+  id: string;
+  name: string;
+  code: string;
+  icon?: string;
+  description?: string;
+};
 
 const SLOW_CONNECTION_TIMEOUT_MS = 30_000;
 
@@ -46,18 +50,16 @@ export default function CreateProjectPage({
   const [otherLabel, setOtherLabel] = useState("");
   const [description, setDescription] = useState("");
   const [showSlowWarning, setShowSlowWarning] = useState(false);
-  const [selectedTemplate, setSelectedTemplate] =
-    useState<CustomTemplate | null>(null);
-  const [templatePanelOpen, setTemplatePanelOpen] = useState(false);
+  const [selectedTemplate, setSelectedTemplate] = useState<AnyTemplate | null>(
+    null,
+  );
   const [savedTemplates] = useState<CustomTemplate[]>(() => listTemplates());
 
   const createProject = useCreateProject();
   const { actor, isFetching: actorLoading } = useActor();
   const { isError: actorError, retry: retryActor } = useActorStatus();
 
-  // Button is ready as soon as we have an actor — don't wait for registration
   const isReady = !!actor && !actorLoading;
-
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
@@ -92,7 +94,6 @@ export default function CreateProjectPage({
       return;
     }
 
-    // Ensure registration before creating project
     try {
       const adminToken = getSecretParameter("caffeineAdminToken") || "";
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -116,7 +117,6 @@ export default function CreateProjectPage({
         return;
       }
       toast.success("Project created!");
-      // Store the pending template so the editor can pick it up
       if (selectedTemplate) {
         sessionStorage.setItem(
           "pendingTemplate",
@@ -147,6 +147,16 @@ export default function CreateProjectPage({
     CATEGORY_OPTIONS.find((o) => o.value === kind)?.icon ?? "✨";
 
   const showConnectionBanner = actorError || showSlowWarning;
+
+  const selectTemplate = (tpl: AnyTemplate) => {
+    setSelectedTemplate(selectedTemplate?.id === tpl.id ? null : tpl);
+  };
+
+  // All templates: presets first, then user-saved custom ones
+  const allTemplates: AnyTemplate[] = [
+    ...PRESET_TEMPLATES,
+    ...savedTemplates.map((t) => ({ ...t, icon: categoryIcon(t.category) })),
+  ];
 
   return (
     <div className="flex-1 overflow-auto scrollbar-thin">
@@ -288,8 +298,6 @@ export default function CreateProjectPage({
                 </button>
               ))}
             </div>
-
-            {/* Other category label */}
             {categoryKind === "Other" && (
               <motion.div
                 initial={{ opacity: 0, height: 0 }}
@@ -325,96 +333,113 @@ export default function CreateProjectPage({
             />
           </div>
 
-          {/* Custom Template Picker */}
-          {savedTemplates.length > 0 && (
-            <Collapsible
-              open={templatePanelOpen}
-              onOpenChange={setTemplatePanelOpen}
-            >
-              <CollapsibleTrigger asChild>
-                <button
-                  type="button"
-                  data-ocid="new_project.templates.toggle"
-                  className="w-full flex items-center justify-between px-4 py-3 rounded-xl border border-border bg-card hover:bg-accent/40 transition-colors text-sm"
-                >
-                  <div className="flex items-center gap-2">
-                    <LayoutTemplate className="w-4 h-4 text-muted-foreground" />
-                    <span className="font-medium text-foreground">
-                      Start from a custom template
-                    </span>
-                    {selectedTemplate && (
-                      <span className="ml-1 bg-primary/20 text-primary text-[10px] px-1.5 py-0.5 rounded-full font-semibold">
-                        {selectedTemplate.name}
-                      </span>
+          {/* Template Picker (presets + custom) */}
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <Label className="text-sm font-medium text-foreground">
+                Start from a Template
+              </Label>
+              <span className="text-xs text-muted-foreground">optional</span>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              {allTemplates.map((tpl, idx) => {
+                const isSelected = selectedTemplate?.id === tpl.id;
+                const isCustom = savedTemplates.some((s) => s.id === tpl.id);
+                return (
+                  <button
+                    key={tpl.id}
+                    type="button"
+                    data-ocid={`new_project.template.item.${idx + 1}`}
+                    onClick={() => selectTemplate(tpl)}
+                    className={cn(
+                      "flex items-start gap-3 p-3.5 rounded-xl border text-left transition-all",
+                      isSelected
+                        ? "border-primary/60 bg-primary/10"
+                        : "border-border bg-card hover:border-border/80 hover:bg-accent/50",
                     )}
-                    <span className="text-muted-foreground text-xs">
-                      (optional)
+                  >
+                    <span className="text-2xl leading-none mt-0.5">
+                      {tpl.icon ?? "✨"}
                     </span>
-                  </div>
-                  {templatePanelOpen ? (
-                    <ChevronUp className="w-4 h-4 text-muted-foreground" />
-                  ) : (
-                    <ChevronDown className="w-4 h-4 text-muted-foreground" />
-                  )}
-                </button>
-              </CollapsibleTrigger>
-              <CollapsibleContent>
-                <motion.div
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-2"
-                >
-                  {savedTemplates.map((tpl, idx) => (
-                    <button
-                      key={tpl.id}
-                      type="button"
-                      data-ocid={`new_project.template.item.${idx + 1}`}
-                      onClick={() =>
-                        setSelectedTemplate(
-                          selectedTemplate?.id === tpl.id ? null : tpl,
-                        )
-                      }
-                      className={cn(
-                        "flex items-start gap-3 p-3 rounded-xl border text-left transition-all",
-                        selectedTemplate?.id === tpl.id
-                          ? "border-primary/60 bg-primary/10"
-                          : "border-border bg-card hover:border-border/80 hover:bg-accent/50",
-                      )}
-                    >
-                      <span className="text-xl leading-none mt-0.5">
-                        {categoryIcon(tpl.category)}
-                      </span>
-                      <div className="flex-1 min-w-0">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-1.5 flex-wrap">
                         <p
                           className={cn(
                             "text-sm font-semibold truncate",
-                            selectedTemplate?.id === tpl.id
-                              ? "text-primary"
-                              : "text-foreground",
+                            isSelected ? "text-primary" : "text-foreground",
                           )}
                         >
                           {tpl.name}
                         </p>
-                        {tpl.description && (
-                          <p className="text-xs text-muted-foreground line-clamp-2 mt-0.5">
-                            {tpl.description}
-                          </p>
+                        {isCustom && (
+                          <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-accent border border-border text-muted-foreground font-medium">
+                            Custom
+                          </span>
                         )}
                       </div>
-                      {selectedTemplate?.id === tpl.id && (
-                        <div className="w-1.5 h-1.5 rounded-full bg-primary mt-1.5 flex-shrink-0" />
+                      {tpl.description && (
+                        <p className="text-xs text-muted-foreground line-clamp-2 mt-0.5">
+                          {tpl.description}
+                        </p>
                       )}
-                    </button>
-                  ))}
+                    </div>
+                    {isSelected && (
+                      <div className="w-1.5 h-1.5 rounded-full bg-primary mt-1.5 flex-shrink-0" />
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Code preview panel */}
+            <AnimatePresence>
+              {selectedTemplate && (
+                <motion.div
+                  key={selectedTemplate.id}
+                  initial={{ opacity: 0, height: 0 }}
+                  animate={{ opacity: 1, height: "auto" }}
+                  exit={{ opacity: 0, height: 0 }}
+                  transition={{ duration: 0.2 }}
+                  className="overflow-hidden"
+                  data-ocid="new_project.template.panel"
+                >
+                  <div className="mt-2 rounded-xl border border-primary/30 overflow-hidden">
+                    {/* Label bar */}
+                    <div className="flex items-center justify-between gap-2 px-3 py-2 bg-zinc-900 border-b border-primary/20">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <Code2 className="w-3.5 h-3.5 text-primary shrink-0" />
+                        <span className="text-xs font-medium text-primary truncate">
+                          {selectedTemplate.name}
+                        </span>
+                        <span className="text-[10px] text-muted-foreground shrink-0">
+                          starter code
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setSelectedTemplate(null)}
+                        className="shrink-0 flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground transition-colors"
+                        data-ocid="new_project.template.close_button"
+                      >
+                        <X className="w-3 h-3" />
+                        Hide
+                      </button>
+                    </div>
+                    {/* Code block */}
+                    <pre className="overflow-auto max-h-64 bg-zinc-950 p-4 text-xs leading-relaxed font-mono text-zinc-300 scrollbar-thin">
+                      <code>{selectedTemplate.code}</code>
+                    </pre>
+                  </div>
                 </motion.div>
-                {selectedTemplate && (
-                  <p className="text-xs text-muted-foreground/60 mt-2 text-center">
-                    Template code will be attached to the new project
-                  </p>
-                )}
-              </CollapsibleContent>
-            </Collapsible>
-          )}
+              )}
+            </AnimatePresence>
+
+            {selectedTemplate && (
+              <p className="text-xs text-muted-foreground/60 text-center pt-1">
+                Starter code will be loaded into the new project
+              </p>
+            )}
+          </div>
 
           {/* Submit */}
           <div className="flex items-center gap-3 pt-2">

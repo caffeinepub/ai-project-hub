@@ -28,16 +28,11 @@ const FLOATING_ITEMS = [
   { icon: Zap, label: "Desktop", x: "75%", y: "45%", delay: 0.15 },
 ];
 
-/**
- * Hash username+password concatenated using SHA-256.
- * Uses the built-in Web Crypto API — no network call, instant.
- */
-async function hashCreds(username: string, password: string): Promise<string> {
-  const data = new TextEncoder().encode(username + password);
-  const hashBuffer = await crypto.subtle.digest("SHA-256", data);
-  const hashArray = Array.from(new Uint8Array(hashBuffer));
-  return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
-}
+// Valid credential pairs — username is case-insensitive, password is case-sensitive
+const VALID_CREDENTIALS: Array<{ username: string; password: string }> = [
+  { username: "unity", password: "Bacon" },
+  { username: "syndelious", password: "Leviathan" },
+];
 
 export default function PasswordGate({ onSuccess }: PasswordGateProps) {
   const [username, setUsername] = useState("");
@@ -51,15 +46,15 @@ export default function PasswordGate({ onSuccess }: PasswordGateProps) {
     setIsSubmitting(true);
 
     try {
-      // Hash both the entered credentials and each valid credential pair,
-      // then compare — credentials never leave the browser.
-      const [inputHash, unityHash, syndeliousHash] = await Promise.all([
-        hashCreds(username, password),
-        hashCreds("Unity", "Bacon"),
-        hashCreds("Syndelious", "Leviathan"),
-      ]);
+      const trimmedUser = username.trim().toLowerCase();
+      const trimmedPass = password.trim();
 
-      if (inputHash === unityHash || inputHash === syndeliousHash) {
+      const isValid = VALID_CREDENTIALS.some(
+        (cred) =>
+          cred.username === trimmedUser && cred.password === trimmedPass,
+      );
+
+      if (isValid) {
         onSuccess();
       } else {
         setError("Invalid username or password. Please try again.");

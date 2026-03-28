@@ -52,7 +52,7 @@ const INITIAL_MESSAGE: Message = {
 };
 
 function extractCodeBlock(text: string): string | null {
-  const match = text.match(/```(?:html)?\s*([\s\S]*?)```/);
+  const match = text.match(/```(?:\w+)?\s*([\s\S]*?)```/);
   return match ? match[1].trim() : null;
 }
 
@@ -64,26 +64,59 @@ function extractTemplateName(text: string): string {
   return "";
 }
 
-async function callTemplateAI(messages: Message[]): Promise<string> {
+async function callTemplateAI(
+  messages: Message[],
+  existingCode?: string | null,
+): Promise<string> {
   const backtick = "`";
-  const systemPrompt = [
-    "You are a Template Studio AI assistant. Your job is to help users create custom starter HTML templates through conversation.",
-    "",
-    "Conversation flow:",
-    "1. Ask clarifying questions about: purpose, layout, color scheme, features, tech (vanilla JS only), content sections, and visual style.",
-    "2. If the user provides a reference image, study it carefully and replicate its layout, color palette, typography style, and key visual elements in the generated template.",
-    "3. Be thorough — ask 3-5 clarifying questions across the conversation before generating code.",
-    "4. When you have enough information, generate a COMPLETE, self-contained HTML file with:",
-    "   - Inline CSS (style tag in head)",
-    "   - Vanilla JavaScript only (no external libs unless CDN is essential)",
-    "   - Realistic placeholder content",
-    "   - Professional, polished design",
-    "   - Mobile responsive",
-    `   - Put the full HTML code inside triple backticks with html language tag: ${backtick}${backtick}${backtick}html ... ${backtick}${backtick}${backtick}`,
-    '5. Before the code block, briefly describe what you built and suggest a short template name like: Template name: "My Template Name"',
-    "",
-    "Keep responses conversational and focused. Only generate code when you have enough details.",
-  ].join("\n");
+
+  let systemPrompt: string;
+  let contextMessages: Array<{ role: "user" | "assistant"; content: string }> =
+    [];
+
+  if (existingCode) {
+    systemPrompt = [
+      "You are a code editor AI. The user has an existing HTML template that they want to modify. Your job is to apply their requested changes to the code.",
+      "",
+      "RULES:",
+      "- Always output the COMPLETE updated HTML file (never partial snippets)",
+      `- Put the full updated HTML code inside triple backticks with html language tag: ${backtick}${backtick}${backtick}html ... ${backtick}${backtick}${backtick}`,
+      "- Only output updated code when the user asks for a change — if they just ask a question, answer conversationally without a code block",
+      "- Make only the changes requested; preserve everything else",
+      "- Never output explanatory text inside the code block",
+    ].join("\n");
+
+    contextMessages = [
+      {
+        role: "user" as const,
+        content: `Here is the current template code:\n${backtick}${backtick}${backtick}html\n${existingCode}\n${backtick}${backtick}${backtick}`,
+      },
+      {
+        role: "assistant" as const,
+        content:
+          "Got it, I can see your template. What would you like to change?",
+      },
+    ];
+  } else {
+    systemPrompt = [
+      "You are a Template Studio AI assistant. Your job is to help users create custom starter HTML templates through conversation.",
+      "",
+      "Conversation flow:",
+      "1. Ask clarifying questions about: purpose, layout, color scheme, features, tech (vanilla JS only), content sections, and visual style.",
+      "2. If the user provides a reference image, study it carefully and replicate its layout, color palette, typography style, and key visual elements in the generated template.",
+      "3. Be thorough — ask 3-5 clarifying questions across the conversation before generating code.",
+      "4. When you have enough information, generate a COMPLETE, self-contained HTML file with:",
+      "   - Inline CSS (style tag in head)",
+      "   - Vanilla JavaScript only (no external libs unless CDN is essential)",
+      "   - Realistic placeholder content",
+      "   - Professional, polished design",
+      "   - Mobile responsive",
+      `   - Put the full HTML code inside triple backticks with html language tag: ${backtick}${backtick}${backtick}html ... ${backtick}${backtick}${backtick}`,
+      '5. Before the code block, briefly describe what you built and suggest a short template name like: Template name: "My Template Name"',
+      "",
+      "Keep responses conversational and focused. Only generate code when you have enough details.",
+    ].join("\n");
+  }
 
   // Extract reference image from last message if any
   const lastMsg = messages[messages.length - 1];
@@ -93,6 +126,7 @@ async function callTemplateAI(messages: Message[]): Promise<string> {
 
   const baseMessages = [
     { role: "system" as const, content: systemPrompt },
+    ...contextMessages,
     ...messages
       .filter((m) => !m.isError)
       .map((m) => ({
@@ -197,7 +231,7 @@ export default function TemplateStudioPage() {
     setIsLoading(true);
 
     try {
-      const reply = await callTemplateAI(updated);
+      const reply = await callTemplateAI(updated, generatedCode);
       const aiMsg: Message = {
         id: `a-${Date.now()}`,
         role: "assistant",
@@ -404,7 +438,7 @@ export default function TemplateStudioPage() {
         <div className="flex flex-col lg:w-1/2 border-r border-border/40 min-h-0 h-[50vh] lg:h-auto">
           <div className="px-4 py-2.5 border-b border-border/30 bg-card/40 flex-shrink-0">
             <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-              AI Chat
+              {generatedCode ? "AI Chat — Edit Mode" : "AI Chat"}
             </p>
           </div>
 
@@ -491,6 +525,24 @@ export default function TemplateStudioPage() {
 
           {/* Input */}
           <div className="px-4 py-3 border-t border-border/40 bg-card/30 flex-shrink-0 relative z-10">
+            {/* Edit mode hint */}
+            <AnimatePresence>
+              {generatedCode && (
+                <motion.div
+                  initial={{ opacity: 0, height: 0 }}
+                  animate={{ opacity: 1, height: "auto" }}
+                  exit={{ opacity: 0, height: 0 }}
+                  transition={{ duration: 0.15 }}
+                  className="mb-2 overflow-hidden"
+                >
+                  <p className="text-[11px] text-primary/70 bg-primary/5 border border-primary/20 rounded-lg px-3 py-1.5">
+                    ✏️ Edit mode — describe changes to your template and the AI
+                    will update the code
+                  </p>
+                </motion.div>
+              )}
+            </AnimatePresence>
+
             {/* Reference image preview */}
             <AnimatePresence>
               {referenceImage && (
@@ -563,7 +615,11 @@ export default function TemplateStudioPage() {
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={handleKeyDown}
-                placeholder="Describe your template idea… (Enter to send)"
+                placeholder={
+                  generatedCode
+                    ? "Describe what to change… (Enter to send)"
+                    : "Describe your template idea… (Enter to send)"
+                }
                 rows={2}
                 disabled={isLoading}
                 autoFocus

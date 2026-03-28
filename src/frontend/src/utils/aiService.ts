@@ -27,7 +27,18 @@ const POST_ENDPOINTS = [
   "https://api.pollinations.ai/v1/chat/completions",
 ];
 
-const TIMEOUT_MS = 45_000;
+const TIMEOUT_MS = 12_000;
+const HARD_CAP_MS = 30_000;
+
+/** Race a promise against a hard timeout */
+function withHardCap<T>(promise: Promise<T>, ms = HARD_CAP_MS): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) =>
+      setTimeout(() => reject(new Error("Request timed out")), ms),
+    ),
+  ]);
+}
 
 /**
  * Parse text from a Pollinations response.
@@ -116,10 +127,10 @@ async function fetchGet(
 }
 
 /**
- * Call the AI service with retry logic across multiple endpoints.
- * Tries POST endpoints first, then falls back to a reliable GET endpoint.
+ * Inner implementation — tries POST endpoints then GET fallback.
+ * Not subject to the hard cap itself; wrap in withHardCap at the export level.
  */
-export async function callAI(
+async function _callAIInner(
   messages: AIMessage[],
   model: "openai" | "openai-large" = "openai",
 ): Promise<string> {
@@ -141,8 +152,6 @@ export async function callAI(
       clearTimeout(timeoutId);
       errors.push(err instanceof Error ? err.message : String(err));
     }
-    // Short pause between attempts
-    await new Promise((r) => setTimeout(r, 800));
   }
 
   // Fall back to GET endpoint (text-only, ignores images in messages)
@@ -160,6 +169,17 @@ export async function callAI(
   throw new Error(
     `AI service unavailable. Tried all endpoints: ${errors.join(" | ")}`,
   );
+}
+
+/**
+ * Call the AI service with retry logic across multiple endpoints.
+ * Hard-capped at HARD_CAP_MS so the spinner can never get stuck indefinitely.
+ */
+export async function callAI(
+  messages: AIMessage[],
+  model: "openai" | "openai-large" = "openai",
+): Promise<string> {
+  return withHardCap(_callAIInner(messages, model));
 }
 
 /** Compress an array of ref images to small base64 for sending to AI */
@@ -217,28 +237,37 @@ export function buildMessagesWithImages(
 /**
  * Call AI with optional reference images. If the vision call fails,
  * automatically retries without images (text-only fallback).
+ * Hard-capped at HARD_CAP_MS so vision failures can never cause indefinite hangs.
  */
 export async function callAIWithImages(
   baseMessages: AIMessage[],
   refImages: RefImage[] | undefined,
   model: "openai" | "openai-large" = "openai",
 ): Promise<string> {
-  const hasImages = refImages && refImages.length > 0;
+  const run = async (): Promise<string> => {
+    const hasImages = refImages && refImages.length > 0;
 
-  if (hasImages) {
-    const compressed = await compressRefImages(refImages!);
-    const messagesWithImages = buildMessagesWithImages(
-      baseMessages,
-      compressed,
-      true,
-    );
-    try {
-      return await callAI(messagesWithImages, "openai-large");
-    } catch {
-      // Vision failed — fall back to text-only
+    if (hasImages) {
+      const compressed = await compressRefImages(refImages!);
+      const messagesWithImages = buildMessagesWithImages(
+        baseMessages,
+        compressed,
+        true,
+      );
+      try {
+        return await _callAIInner(messagesWithImages, "openai-large");
+      } catch {
+        // Vision failed — fall back to text-only
+      }
     }
-  }
 
-  const textMessages = buildMessagesWithImages(baseMessages, refImages, false);
-  return callAI(textMessages, model);
+    const textMessages = buildMessagesWithImages(
+      baseMessages,
+      refImages,
+      false,
+    );
+    return _callAIInner(textMessages, model);
+  };
+
+  return withHardCap(run());
 }
